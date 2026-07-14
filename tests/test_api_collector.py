@@ -45,6 +45,10 @@ class FakeSession:
             return FakeResponse({"references": [{"url": "https://search.example/a", "title": "搜索来源",
                                                   "content": "瑞思迈是常见品牌"}]})
         if "api.deepseek.com" in url:
+            if any("只返回 JSON" in str(message.get("content", "")) for message in (body or {}).get("messages", [])):
+                return FakeResponse({"choices": [{"message": {"content": json_module({"prompts": [
+                    {"text": "睡眠呼吸机怎么选？", "intent": "选购", "reason": "测试品牌进入候选集"}
+                ]})}}]})
             return FakeResponse({"choices": [{"message": {"content": "DeepSeek 根据资料提及瑞思迈。[1]"}}]})
         if action == "ChatCompletions":
             return FakeResponse({"Response": {"Choices": [{"Message": {"Content": "混元提及瑞思迈。[1]"}}],
@@ -105,6 +109,11 @@ class OfficialApiCollectorTest(unittest.TestCase):
         )
         self.assertTrue(headers["Authorization"].startswith("TC3-HMAC-SHA256 Credential=id/"))
         self.assertNotIn("very-secret", headers["Authorization"])
+
+    def test_reverse_prompts_uses_configured_model(self):
+        result = self.collector.reverse_prompts("生成品牌曝光提示词")
+        self.assertEqual(result["provider"], "DeepSeek")
+        self.assertEqual(result["items"][0]["text"], "睡眠呼吸机怎么选？")
 
 
 if __name__ == "__main__":

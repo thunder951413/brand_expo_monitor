@@ -17,6 +17,8 @@
     <nav>
       <button class="nav-item active" data-view="dashboard"><span class="nav-icon">⌂</span><span>可见性概览</span></button>
       <button class="nav-item" data-view="records"><span class="nav-icon">≡</span><span>回答与来源</span></button>
+      <button class="nav-item" data-view="relevance"><span class="nav-icon">◎</span><span>相关度分析</span></button>
+      <button class="nav-item" data-view="prompts"><span class="nav-icon">✦</span><span>提示词实验</span></button>
       <button class="nav-item" data-view="config"><span class="nav-icon">⚙</span><span>监测配置</span></button>
     </nav>
     <div class="sidebar-card">
@@ -101,40 +103,13 @@
         </article>
 
         <article class="panel source-panel">
-          <div class="panel-head"><div><div class="section-kicker">来源情报</div><h2>AI 常引用的网站</h2><p>按域名统计引用次数</p></div></div>
+          <div class="panel-head"><div><div class="section-kicker">来源情报</div><h2>AI 常引用的网站</h2><p>按域名统计引用次数</p></div><button class="text-button" data-go="relevance">深入分析 →</button></div>
           <div id="source-chart" class="source-chart empty-state">尚无引用来源</div>
         </article>
       </div>
 
-      <div class="analysis-grid retrieval-grid">
-        <article class="panel retrieval-panel">
-          <div class="panel-head"><div><div class="section-kicker">检索漏斗</div><h2>召回 → 选材 → 引用</h2><p>区分平台可观测数据与本地相关度计算</p></div><a class="text-button" href="/api/export-retrieval.csv">导出轨迹 CSV ↗</a></div>
-          <div id="retrieval-funnel" class="retrieval-funnel empty-state">运行 API 采集后显示检索阶段</div>
-          <div id="retrieval-queries" class="query-chips"></div>
-        </article>
-        <article class="panel stage-source-panel">
-          <div class="panel-head"><div><div class="section-kicker">阶段网站</div><h2>每个阶段使用的网站</h2><p>查看高召回但未进入回答的来源</p></div></div>
-          <div id="stage-sources" class="stage-sources empty-state">尚无检索轨迹</div>
-        </article>
-      </div>
-
-      <article class="panel retrieval-opportunity-panel">
-        <div class="panel-head"><div><div class="section-kicker">策略实验</div><h2>来源转化与曝光机会</h2><p>召回多但引用少的网站，可用于分析内容相关性与信源偏好</p></div><button class="text-button" data-go="config">配置自有域名 →</button></div>
-        <div id="strategy-insights" class="strategy-insights"></div>
-        <div class="table-wrap"><table><thead><tr><th>网站</th><th>召回</th><th>选材</th><th>引用</th><th>引用转化</th><th>平均相关度</th><th>判断</th></tr></thead><tbody id="retrieval-opportunities-body"></tbody></table></div>
-      </article>
-
-      <article class="panel variability-panel">
-        <div class="panel-head"><div><div class="section-kicker">来源稳定性</div><h2>提示词变化与引用规律</h2><p>既观察品牌相关问题的整体信源池，也分离不同问法和时间波动的影响</p></div><span class="updated-at">持续采样后形成判断</span></div>
-        <div id="platform-strategies" class="platform-strategies"></div>
-        <div class="subtable-title"><b>不同提示词的变化幅度</b><span>两两比较引用域名，区分稳定信源与问题意图带来的变化</span></div>
-        <div class="table-wrap"><table><thead><tr><th>平台</th><th>提示词 A</th><th>提示词 B</th><th>来源重合</th><th>变化幅度</th><th>共同稳定信源</th></tr></thead><tbody id="prompt-comparison-body"></tbody></table></div>
-        <div class="subtable-title"><b>相同提示词的时间波动</b><span>保留重复问法作为随机性基线</span></div>
-        <div class="table-wrap"><table><thead><tr><th>平台 / 提示词</th><th>有效轮次</th><th>引用稳定度</th><th>来源变化率</th><th>规律判断</th><th>固定 / 轮换来源</th></tr></thead><tbody id="variability-body"></tbody></table></div>
-      </article>
-
       <article class="panel prompts-panel">
-        <div class="panel-head"><div><div class="section-kicker">机会识别</div><h2>提示词表现</h2><p>优先优化未提及品牌或引用不足的用户问题</p></div><button class="text-button" data-go="config">管理提示词 →</button></div>
+        <div class="panel-head"><div><div class="section-kicker">机会识别</div><h2>提示词表现</h2><p>优先优化未提及品牌或引用不足的用户问题</p></div><button class="text-button" data-go="prompts">管理与反推 →</button></div>
         <div class="table-wrap"><table><thead><tr><th>提示词</th><th>回答数</th><th>可见度</th><th>平均位次</th><th>引用数</th><th>机会判断</th></tr></thead><tbody id="prompt-performance-body"></tbody></table></div>
       </article>
 
@@ -158,6 +133,63 @@
         </div>
         <div class="record-count" id="record-count">0 条记录</div>
         <div class="table-wrap"><table><thead><tr><th>采集时间</th><th>平台</th><th>提示词</th><th>方式</th><th>品牌命中</th><th>位次</th><th>引用</th><th>状态</th></tr></thead><tbody id="records-body"></tbody></table></div>
+      </article>
+    </section>
+
+    <section id="relevance-view" class="view">
+      <div class="config-intro">
+        <div><div class="section-kicker">信源情报</div><h2>网站相关度与检索规律</h2><p>集中查看网站从召回、选材到最终引用的相关度、转化率、稳定性与平台偏好。</p></div>
+        <a class="button ghost" href="/api/export-retrieval.csv">导出检索轨迹 CSV</a>
+      </div>
+      <div class="analysis-grid retrieval-grid">
+        <article class="panel retrieval-panel">
+          <div class="panel-head"><div><div class="section-kicker">检索漏斗</div><h2>召回 → 选材 → 引用</h2><p>区分平台可观测数据与本地相关度计算</p></div></div>
+          <div id="retrieval-funnel" class="retrieval-funnel empty-state">运行 API 采集后显示检索阶段</div>
+          <div id="retrieval-queries" class="query-chips"></div>
+        </article>
+        <article class="panel stage-source-panel">
+          <div class="panel-head"><div><div class="section-kicker">阶段网站</div><h2>每个阶段使用的网站</h2><p>查看各网站的出现次数与平均相关度</p></div></div>
+          <div id="stage-sources" class="stage-sources empty-state">尚无检索轨迹</div>
+        </article>
+      </div>
+      <article class="panel retrieval-opportunity-panel">
+        <div class="panel-head"><div><div class="section-kicker">策略实验</div><h2>来源转化与曝光机会</h2><p>召回多但引用少的网站，可用于分析内容相关性与信源偏好</p></div><button class="text-button" data-go="config">配置自有域名 →</button></div>
+        <div id="strategy-insights" class="strategy-insights"></div>
+        <div class="table-wrap"><table><thead><tr><th>网站</th><th>召回</th><th>选材</th><th>引用</th><th>引用转化</th><th>平均相关度</th><th>判断</th></tr></thead><tbody id="retrieval-opportunities-body"></tbody></table></div>
+      </article>
+      <article class="panel variability-panel">
+        <div class="panel-head"><div><div class="section-kicker">来源稳定性</div><h2>提示词变化与引用规律</h2><p>区分不同问法带来的信源变化与相同条件下的时间波动</p></div><span class="updated-at">持续采样后形成判断</span></div>
+        <div id="platform-strategies" class="platform-strategies"></div>
+        <div class="subtable-title"><b>不同提示词的变化幅度</b><span>两两比较引用域名，找出跨问题稳定信源</span></div>
+        <div class="table-wrap"><table><thead><tr><th>平台</th><th>提示词 A</th><th>提示词 B</th><th>来源重合</th><th>变化幅度</th><th>共同稳定信源</th></tr></thead><tbody id="prompt-comparison-body"></tbody></table></div>
+        <div class="subtable-title"><b>相同提示词的时间波动</b><span>保留重复问法作为随机性基线</span></div>
+        <div class="table-wrap"><table><thead><tr><th>平台 / 提示词</th><th>有效轮次</th><th>引用稳定度</th><th>来源变化率</th><th>规律判断</th><th>固定 / 轮换来源</th></tr></thead><tbody id="variability-body"></tbody></table></div>
+      </article>
+    </section>
+
+    <section id="prompts-view" class="view">
+      <div class="config-intro">
+        <div><div class="section-kicker">问题策略</div><h2>提示词实验与 AI 反推</h2><p>从最终品牌曝光目标反推真实用户可能提出的问题，再用多平台采集验证。</p></div>
+        <button class="button primary" id="run-prompt-set">运行全部启用提示词</button>
+      </div>
+      <div class="prompt-lab-grid">
+        <article class="panel prompt-reverse-card">
+          <div class="panel-head"><div><h2>目标 → 用户问题</h2><p>结合历史命中率、来源相关度和平台实际搜索词生成候选问题</p></div><span class="step-number">AI</span></div>
+          <form id="reverse-prompt-form">
+            <label>希望最终引出的目标<textarea id="reverse-goal" rows="4" maxlength="500" placeholder="例如：让准备购买家用呼吸机的用户在品牌推荐、排行和产品对比中看到瑞思迈ResMed"></textarea></label>
+            <div class="reverse-actions"><button class="button primary" type="submit">开始反推</button><small>配置 DeepSeek、千问或豆包 API 后使用模型扩展；否则使用可解释的数据规则。</small></div>
+          </form>
+          <div id="reverse-summary" class="reverse-summary">填写最终目的，系统会反推出可能引出该结果的用户问题。</div>
+        </article>
+        <article class="panel prompt-manager-card">
+          <div class="panel-head"><div><h2>提示词列表</h2><p>启用的问题会分别在所有启用平台执行</p></div><span class="step-number" id="active-prompt-count">0</span></div>
+          <form id="prompt-form" class="inline-form"><input id="new-prompt" placeholder="添加新的监测问题，例如：进口家用呼吸机怎么选？"><button class="button ghost" type="submit">添加</button></form>
+          <div id="prompt-list" class="prompt-list"></div>
+        </article>
+      </div>
+      <article class="panel reverse-results-panel">
+        <div class="panel-head"><div><div class="section-kicker">反推结果</div><h2>最可能引出目标的提示词</h2><p>预测分用于排序实验优先级，最终仍以多平台真实测试结果为准</p></div><span class="updated-at" id="reverse-provider">尚未生成</span></div>
+        <div id="reverse-suggestions" class="reverse-suggestions empty-state">暂无反推结果</div>
       </article>
     </section>
 
@@ -195,11 +227,6 @@
       <article class="panel config-card full">
         <div class="panel-head"><div><h2>平台采集状态</h2><p>同时显示官方 API 与 WebDriver 登录状态</p></div><span class="step-number">02</span></div>
         <div id="platform-list" class="platform-list"></div>
-      </article>
-      <article class="panel config-card full">
-        <div class="panel-head"><div><h2>提示词列表</h2><p>启用的问题会分别在所有启用平台执行</p></div><span class="step-number">03</span></div>
-        <form id="prompt-form" class="inline-form"><input id="new-prompt" placeholder="添加新的监测问题，例如：进口家用呼吸机怎么选？"><button class="button ghost" type="submit">添加提示词</button></form>
-        <div id="prompt-list" class="prompt-list"></div>
       </article>
       <div class="save-hint" id="save-state">配置保存在本机数据库中；定时任务默认关闭。</div>
     </section>

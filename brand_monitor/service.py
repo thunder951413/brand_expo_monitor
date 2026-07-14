@@ -4,6 +4,7 @@ import csv
 import io
 import json
 import math
+import re
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from itertools import combinations
@@ -142,7 +143,105 @@ class MonitorService:
                 "INSERT INTO prompts (text, active, created_at) VALUES (?, 1, ?)", (text, iso_now())
             )
             row = conn.execute("SELECT * FROM prompts WHERE id=?", (cursor.lastrowid,)).fetchone()
-        return dict(row)
+            return dict(row)
+
+    def reverse_prompt_suggestions(self, goal: str, limit: int = 12) -> dict:
+        goal = str(goal or "").strip()
+        limit = max(1, min(30, int(limit or 12)))
+        settings = self.settings()
+        if not goal:
+            goal = f"让目标用户在品牌发现、推荐、排行和对比问题中看到{settings['brand_name']}"
+        if len(goal) > 500:
+            raise ValueError("最终目标不能超过 500 字")
+        with connect(self.db_path) as conn:
+            history = [dict(row) for row in conn.execute(
+                """SELECT ru.prompt_text,COUNT(DISTINCT r.id) runs,
+                   ROUND(AVG(CASE WHEN r.status='success' THEN r.brand_hit END)*100,1) hit_rate,
+                   ROUND(AVG(o.local_relevance),4) avg_relevance
+                   FROM runs ru LEFT JOIN results r ON r.run_id=ru.id
+                   LEFT JOIN source_observations o ON o.result_id=r.id
+                   GROUP BY ru.prompt_text ORDER BY runs DESC,hit_rate DESC LIMIT 30"""
+            )]
+            existing = [row[0] for row in conn.execute("SELECT text FROM prompts ORDER BY id")]
+            actual_queries = [dict(row) for row in conn.execute(
+                """SELECT query_text,COUNT(*) count FROM search_queries
+                   WHERE query_text!='' GROUP BY query_text ORDER BY count DESC LIMIT 20"""
+            )]
+
+        subject = "目标品类"
+        for text in existing:
+            candidate = re.split(r"品牌|推荐|排名|排行|对比|怎么|如何|有哪些|选购", text, maxsplit=1)[0].strip()
+            if len(candidate) >= 2:
+                subject = candidate
+                break
+        fallback = [
+            (f"{subject}都有哪些主流品牌？", "品牌发现", "覆盖用户建立候选品牌池的入口问题"),
+            (f"{subject}哪个品牌更值得推荐？", "推荐", "直接触发模型给出品牌候选与推荐理由"),
+            (f"{subject}品牌排行榜怎么看？", "排行", "测试目标品牌能否进入榜单型回答"),
+            (f"{subject}进口品牌和国产品牌有什么区别？", "对比", "通过品牌阵营比较扩大候选集合"),
+            (f"第一次买{subject}应该怎么选？", "新手选购", "新手问题通常需要品牌、参数和避坑建议"),
+            (f"家用场景选择{subject}要看哪些指标？", "使用场景", "从场景与参数引出符合条件的品牌"),
+            (f"预算有限时{subject}有哪些靠谱选择？", "预算", "测试价格约束下目标品牌的进入能力"),
+            (f"长期使用{subject}更看重哪些品牌能力？", "长期使用", "引出可靠性、服务和耗材等品牌证据"),
+            (f"{subject}常见品牌的优缺点分别是什么？", "优缺点", "比较型回答更容易形成多品牌提及"),
+            (f"适合睡眠呼吸暂停人群的{subject}怎么选？", "目标人群", "用具体人群需求触发产品与品牌匹配"),
+            (f"{subject}售后服务和耗材成本怎么比较？", "售后成本", "从长期成本反推品牌与渠道选择"),
+            (f"专业机构通常如何评价{subject}品牌？", "权威评价", "测试权威信源与专业评价对品牌曝光的影响"),
+        ]
+        instruction = (
+            f"最终目标：{goal}\n监测品类：{subject}\n目标品牌：{settings['brand_name']}（生成的问题中不要直接出现该品牌）\n"
+            f"历史提示词表现：{json.dumps(history[:12], ensure_ascii=False)}\n"
+            f"平台实际搜索词：{json.dumps(actual_queries[:12], ensure_ascii=False)}\n"
+            f"现有提示词：{json.dumps(existing, ensure_ascii=False)}\n请生成最多 {limit} 个新的自然用户问题。"
+        )
+        provider = "数据规则"
+        raw_items = []
+        ai_error = ""
+        if self.api_collector and hasattr(self.api_collector, "reverse_prompts"):
+            try:
+                generated = self.api_collector.reverse_prompts(instruction)
+                provider = generated.get("provider", "AI")
+                raw_items = generated.get("items", [])
+            except Exception as exc:
+                ai_error = str(exc)
+        candidates = []
+        for item in raw_items:
+            if isinstance(item, str):
+                candidates.append((item, "AI 扩展", "模型根据目标与历史证据反推"))
+            elif isinstance(item, dict):
+                candidates.append((str(item.get("text", "")), str(item.get("intent", "AI 扩展")),
+                                   str(item.get("reason", "模型根据目标与历史证据反推"))))
+        candidates.extend(fallback)
+        brand_values = [value.casefold() for value in settings["alias_list"]]
+        existing_folded = {text.casefold() for text in existing}
+        seen = set()
+        suggestions = []
+        total_runs = sum(int(row.get("runs") or 0) for row in history)
+        for text, intent, reason in candidates:
+            text = re.sub(r"\s+", " ", text).strip(" -—。")
+            folded = text.casefold()
+            if not text or folded in seen or folded in existing_folded or any(brand in folded for brand in brand_values):
+                continue
+            seen.add(folded)
+            closest = max(history, key=lambda row: relevance_score(text, row["prompt_text"]), default=None)
+            similarity = relevance_score(text, closest["prompt_text"]) if closest else 0
+            benchmark_hit = float(closest.get("hit_rate") or 0) / 100 if closest else .35
+            observed_relevance = float(closest.get("avg_relevance") or 0) if closest else 0
+            goal_fit = relevance_score(goal, text)
+            predicted = round(min(95, max(20, (benchmark_hit * .45 + similarity * .25 +
+                                                     observed_relevance * .15 + goal_fit * .15) * 100)))
+            evidence = (f"参考最相近历史问题“{closest['prompt_text']}”，命中率 {closest.get('hit_rate') or 0}%，"
+                        f"来源相关度 {round(observed_relevance * 100)}%。") if closest else "暂无历史样本，先作为探索问题测试。"
+            suggestions.append({
+                "text": text, "intent": intent or "探索", "reason": reason or "目标导向扩展",
+                "predicted_exposure": predicted, "confidence": "高" if total_runs >= 20 else "中" if total_runs >= 5 else "低",
+                "evidence": evidence, "goal_fit": round(goal_fit * 100),
+            })
+            if len(suggestions) >= limit:
+                break
+        suggestions.sort(key=lambda item: (-item["predicted_exposure"], -item["goal_fit"], item["text"]))
+        return {"goal": goal, "subject": subject, "provider": provider, "ai_error": ai_error,
+                "history_runs": total_runs, "suggestions": suggestions}
 
     def toggle(self, table: str, item_id: int, active: bool) -> None:
         if table not in {"prompts", "platforms"}:

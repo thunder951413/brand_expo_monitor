@@ -122,6 +122,14 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual({x["domain"] for x in metrics["rotating_domains"]}, {"a.com", "b.com"})
         self.assertGreater(metrics["change_rate"], 0)
 
+    def test_reverse_prompt_suggestions_have_explainable_scores(self):
+        result = self.service.reverse_prompt_suggestions("让用户在家用呼吸机推荐中看到瑞思迈ResMed", limit=5)
+        self.assertEqual(result["subject"], "家用呼吸机")
+        self.assertEqual(len(result["suggestions"]), 5)
+        self.assertTrue(all("瑞思迈" not in item["text"] for item in result["suggestions"]))
+        self.assertTrue(all(20 <= item["predicted_exposure"] <= 95 for item in result["suggestions"]))
+        self.assertTrue(all(item["evidence"] for item in result["suggestions"]))
+
     def test_platform_strategy_compares_different_prompts(self):
         config = self.service.config()
         platform_id = config["platforms"][0]["id"]

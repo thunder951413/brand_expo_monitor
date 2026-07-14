@@ -80,6 +80,15 @@ def post_prompt():
         return error_response(exc)
 
 
+@app.post("/api/prompts/reverse")
+def reverse_prompts():
+    try:
+        data = request.get_json(force=True)
+        return ok(service.reverse_prompt_suggestions(data.get("goal", ""), int(data.get("limit", 12))))
+    except Exception as exc:
+        return error_response(exc)
+
+
 @app.patch("/api/<kind>/<int:item_id>")
 def patch_config(kind, item_id):
     try:

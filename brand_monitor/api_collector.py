@@ -114,6 +114,17 @@ def _citation_ids(answer: str) -> list[int]:
     return list(dict.fromkeys(int(x) for x in values))
 
 
+def _json_object(text: str) -> dict:
+    text = (text or "").strip()
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S | re.I)
+    candidate = fenced.group(1) if fenced else text
+    if not candidate.startswith("{"):
+        match = re.search(r"\{.*\}", candidate, re.S)
+        candidate = match.group(0) if match else "{}"
+    value = json.loads(candidate)
+    return value if isinstance(value, dict) else {}
+
+
 def _query_records(value: Any, prompt: str, provider: str, include_prompt: bool = False) -> list[dict]:
     queries = []
     if include_prompt:
@@ -226,6 +237,46 @@ class OfficialApiCollector:
             return collection
         except Exception as exc:
             return Collection("", [], "api_error", f"官方 API 调用失败：{exc}")
+
+    def reverse_prompts(self, instruction: str) -> dict:
+        """Use the first configured general model to expand goal-driven user questions."""
+        c = self.config.values()
+        system = (
+            "你是品牌可见性研究员。根据目标和历史证据，反推出真实用户可能提出、且可能引出目标品牌的自然问题。"
+            "不要在问题中直接写品牌名，不要写营销口号。覆盖发现、推荐、排名、对比、场景、痛点、预算和人群意图。"
+            "只返回 JSON：{\"prompts\":[{\"text\":\"...\",\"intent\":\"...\",\"reason\":\"...\"}]}。"
+        )
+        if c.get("DEEPSEEK_API_KEY"):
+            data = self._post(
+                f"{c['DEEPSEEK_BASE_URL'].rstrip('/')}/chat/completions",
+                headers={"Authorization": f"Bearer {c['DEEPSEEK_API_KEY']}", "Content-Type": "application/json"},
+                body={"model": c["DEEPSEEK_MODEL"], "messages": [
+                    {"role": "system", "content": system}, {"role": "user", "content": instruction}
+                ], "response_format": {"type": "json_object"}, "temperature": 0.7},
+            )
+            text = _message_text((data.get("choices") or [{}])[0].get("message", {}).get("content", ""))
+            return {"provider": "DeepSeek", "items": _json_object(text).get("prompts", [])}
+        if c.get("QWEN_API_KEY"):
+            data = self._post(
+                f"{c['QWEN_BASE_URL'].rstrip('/')}/api/v1/services/aigc/text-generation/generation",
+                headers={"Authorization": f"Bearer {c['QWEN_API_KEY']}", "Content-Type": "application/json"},
+                body={"model": c["QWEN_MODEL"], "input": {"messages": [
+                    {"role": "system", "content": system}, {"role": "user", "content": instruction}
+                ]}, "parameters": {"result_format": "message", "temperature": 0.7}},
+            )
+            choices = data.get("output", {}).get("choices", [])
+            text = _message_text(choices[0].get("message", {}).get("content", "")) if choices else ""
+            return {"provider": "千问", "items": _json_object(text).get("prompts", [])}
+        if c.get("DOUBAO_API_KEY"):
+            data = self._post(
+                f"{c['DOUBAO_BASE_URL'].rstrip('/')}/responses",
+                headers={"Authorization": f"Bearer {c['DOUBAO_API_KEY']}", "Content-Type": "application/json"},
+                body={"model": c["DOUBAO_MODEL"], "input": f"{system}\n\n{instruction}"},
+            )
+            texts = [item["text"] for item in _walk(data.get("output", []))
+                     if item.get("type") in {"output_text", "text"} and isinstance(item.get("text"), str)]
+            return {"provider": "豆包", "items": _json_object("\n".join(texts)).get("prompts", [])}
+        raise RuntimeError("未配置可用于反推提示词的 DeepSeek、千问或豆包 API")
 
     def _post(self, url: str, *, headers: dict, body: dict, timeout: int = 180) -> dict:
         response = self.session.post(url, headers=headers, json=body, timeout=timeout)

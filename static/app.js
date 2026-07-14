@@ -1,4 +1,4 @@
-const state = { config: null, browsers: [], apis: [], apiConfig: null, dashboard: null, view: 'dashboard', days: 30 };
+const state = { config: null, browsers: [], apis: [], apiConfig: null, dashboard: null, reverse: null, view: 'dashboard', days: 30 };
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const escapeHTML = (value = '') => String(value).replace(/[&<>'"]/g, char => ({
@@ -42,7 +42,8 @@ function switchView(view) {
   $(`#${view}-view`).classList.add('active');
   $$('.nav-item').forEach(element => element.classList.toggle('active', element.dataset.view === view));
   const names = {
-    dashboard: ['AI 品牌可见性', '概览'], records: ['回答与引用', '证据记录'], config: ['监测配置', '设置']
+    dashboard: ['AI 品牌可见性', '概览'], records: ['回答与引用', '证据记录'],
+    relevance: ['网站相关度', '信源分析'], prompts: ['提示词实验', 'AI 反推'], config: ['监测配置', '设置']
   };
   $('#page-title').textContent = names[view][0];
   $('#breadcrumb-current').textContent = names[view][1];
@@ -65,6 +66,8 @@ async function loadConfig() {
   $('#schedule-minutes').value = settings.schedule_minutes;
   $('#schedule-mode').value = settings.schedule_mode;
   $('#next-run').textContent = response.scheduler.next_run ? `下次 ${formatTime(response.scheduler.next_run)}` : '定时任务未启用';
+  const reverseGoal = $('#reverse-goal');
+  if (reverseGoal && !reverseGoal.value) reverseGoal.value = `让目标用户在品牌推荐、排行和产品对比中看到${settings.brand_name}`;
   renderConfig();
   renderApiConfig();
 }
@@ -89,7 +92,28 @@ function renderConfig() {
     <label class="switch"><input type="checkbox" data-toggle="prompts" data-id="${prompt.id}" ${prompt.active ? 'checked' : ''}><span></span></label>
     <button class="delete-btn" data-delete="${prompt.id}" title="删除">×</button>
   </div>`).join('');
+  const activeCount = $('#active-prompt-count');
+  if (activeCount) activeCount.textContent = prompts.filter(prompt => prompt.active).length;
   $('#platform-filter').innerHTML = '<option value="">全部平台</option>' + platforms.map(platform => `<option value="${escapeHTML(platform.slug)}">${escapeHTML(platform.name)}</option>`).join('');
+}
+
+function renderReverseSuggestions(data) {
+  state.reverse = data;
+  $('#reverse-provider').textContent = `${data.provider} · ${data.history_runs} 次历史样本`;
+  $('#reverse-summary').innerHTML = `<b>识别品类：${escapeHTML(data.subject)}</b><span>目标：${escapeHTML(data.goal)}</span>${data.ai_error ? `<small>模型未启用：${escapeHTML(data.ai_error)}，已使用数据规则。</small>` : ''}`;
+  const existing = new Set(state.config.prompts.map(item => item.text.toLocaleLowerCase()));
+  const suggestions = data.suggestions || [];
+  const element = $('#reverse-suggestions');
+  element.className = suggestions.length ? 'reverse-suggestions' : 'reverse-suggestions empty-state';
+  element.innerHTML = suggestions.map((item, index) => {
+    const added = existing.has(item.text.toLocaleLowerCase());
+    return `<article class="reverse-suggestion">
+      <div class="suggestion-rank">${index + 1}</div>
+      <div class="suggestion-main"><div><span>${escapeHTML(item.intent)}</span><strong>${escapeHTML(item.text)}</strong></div><p>${escapeHTML(item.reason)}</p><small>${escapeHTML(item.evidence)}</small></div>
+      <div class="suggestion-score"><strong>${item.predicted_exposure}</strong><span>预测曝光</span><small>${escapeHTML(item.confidence)}置信度</small></div>
+      <button class="button ghost" data-add-suggestion="${escapeHTML(item.text)}" ${added ? 'disabled' : ''}>${added ? '已加入' : '加入列表'}</button>
+    </article>`;
+  }).join('') || '没有生成新的提示词；可调整最终目标后重试。';
 }
 
 function renderApiConfig() {
@@ -423,6 +447,11 @@ document.addEventListener('click', async event => {
   if (row) showResult(row.dataset.result);
   if (event.target.closest('#manual-btn')) manualModal();
   if (event.target.closest('#run-btn')) runModal();
+  if (event.target.closest('#run-prompt-set')) {
+    runModal();
+    const all = $('#run-form input[name="all"]');
+    if (all) all.checked = true;
+  }
 
   const range = event.target.closest('[data-days]');
   if (range) {
@@ -462,6 +491,14 @@ document.addEventListener('click', async event => {
     try { await api(`/api/prompts/${remove.dataset.delete}`, { method: 'DELETE' }); await loadConfig(); toast('提示词已删除'); }
     catch (error) { toast(error.message, true); }
   }
+  const suggestion = event.target.closest('[data-add-suggestion]');
+  if (suggestion && !suggestion.disabled) {
+    try {
+      await api('/api/prompts', { method: 'POST', body: JSON.stringify({ text: suggestion.dataset.addSuggestion }) });
+      suggestion.disabled = true; suggestion.textContent = '已加入';
+      await loadConfig(); toast('反推提示词已加入实验列表');
+    } catch (error) { toast(error.message, true); }
+  }
 });
 
 document.addEventListener('change', async event => {
@@ -481,6 +518,14 @@ document.addEventListener('submit', async event => {
     if (event.target.id === 'prompt-form') {
       await api('/api/prompts', { method: 'POST', body: JSON.stringify({ text: $('#new-prompt').value }) });
       $('#new-prompt').value = ''; await loadConfig(); toast('提示词已添加');
+    }
+    if (event.target.id === 'reverse-prompt-form') {
+      const button = event.target.querySelector('button');
+      button.disabled = true; button.textContent = '正在分析历史数据…';
+      const response = await api('/api/prompts/reverse', { method: 'POST', body: JSON.stringify({ goal: $('#reverse-goal').value, limit: 12 }) });
+      renderReverseSuggestions(response.data);
+      button.disabled = false; button.textContent = '重新反推';
+      toast(`已由${response.data.provider}生成提示词实验建议`);
     }
     if (event.target.id === 'run-form') {
       const form = new FormData(event.target); const button = event.target.querySelector('button');

@@ -261,6 +261,29 @@ input:focus, textarea:focus, select:focus { border-color: #9899ef; box-shadow: 0
 .platform-item, .prompt-item { min-height: 54px; padding: 9px 12px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 10px; }
 .platform-item:last-child, .prompt-item:last-child { border-bottom: 0; }
 .platform-meta, .prompt-text { flex: 1; min-width: 0; }
+.prompt-lab-grid { margin-bottom: 12px; display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(380px, .95fr); gap: 12px; }
+.prompt-reverse-card, .prompt-manager-card { min-height: 340px; }
+.prompt-reverse-card form { padding: 0 20px 18px; }
+.prompt-reverse-card textarea { min-height: 96px; resize: vertical; }
+.reverse-actions { margin-top: 10px; display: flex; gap: 10px; align-items: center; }
+.reverse-actions small { color: var(--muted); font-size: 8px; line-height: 1.45; }
+.reverse-summary { margin: 0 20px 18px; padding: 11px; border-radius: 8px; color: #687384; background: #f4f6f9; display: grid; gap: 4px; font-size: 8px; }
+.reverse-summary b { color: #455164; font-size: 9px; }
+.reverse-summary small { color: #9a6a28; }
+.prompt-manager-card .prompt-list { max-height: 290px; overflow: auto; }
+.reverse-results-panel { margin-bottom: 12px; }
+.reverse-suggestions { padding: 0 20px 18px; display: grid; gap: 7px; }
+.reverse-suggestion { min-height: 86px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 8px; display: grid; grid-template-columns: 24px minmax(0, 1fr) 72px auto; gap: 10px; align-items: center; }
+.suggestion-rank { width: 23px; height: 23px; border-radius: 7px; color: #6259c9; background: #eeecff; display: grid; place-items: center; font-size: 9px; font-weight: 700; }
+.suggestion-main { min-width: 0; display: grid; gap: 4px; }
+.suggestion-main > div { display: flex; gap: 7px; align-items: center; }
+.suggestion-main > div span { padding: 2px 5px; border-radius: 4px; color: #6156b7; background: #f0edff; font-size: 7px; white-space: nowrap; }
+.suggestion-main strong { overflow: hidden; color: #354154; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.suggestion-main p { margin: 0; color: #6e7988; font-size: 8px; }
+.suggestion-main small { color: #9aa3af; font-size: 7px; }
+.suggestion-score { text-align: center; display: grid; }
+.suggestion-score strong { color: #2f9b70; font-size: 18px; }
+.suggestion-score span, .suggestion-score small { color: #8993a1; font-size: 7px; }
 .platform-meta b, .platform-meta small { display: block; }
 .platform-meta b { font-size: 10px; }
 .platform-meta small { margin-top: 2px; color: #8c96a4; font-size: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -361,6 +384,7 @@ input:focus, textarea:focus, select:focus { border-color: #9899ef; box-shadow: 0
   .metric-grid { grid-template-columns: repeat(3, 1fr); }
   .metric-card.hero-metric { grid-column: span 1; }
   .overview-grid, .analysis-grid { grid-template-columns: 1fr; }
+  .prompt-lab-grid { grid-template-columns: 1fr; }
   .health-panel { min-height: 0; }
 }
 @media (max-width: 860px) {
@@ -379,7 +403,7 @@ input:focus, textarea:focus, select:focus { border-color: #9899ef; box-shadow: 0
   .sidebar { position: static; width: 100%; padding: 14px; }
   .brand-lockup { padding-bottom: 12px; }
   .nav-label, .sidebar-card, .sidebar-foot { display: none; }
-  .sidebar nav { grid-template-columns: repeat(3, 1fr); }
+  .sidebar nav { grid-template-columns: repeat(5, 1fr); }
   .nav-item { justify-content: center; padding: 9px 6px; font-size: 10px; }
   .nav-icon { display: none; }
   main { margin: 0; padding: 0 12px 32px; }
@@ -399,6 +423,8 @@ input:focus, textarea:focus, select:focus { border-color: #9899ef; box-shadow: 0
   .retrieval-funnel { grid-template-columns: 1fr; }
   .funnel-stage i { display: none; }
   .strategy-insights { grid-template-columns: 1fr; }
+  .reverse-suggestion { grid-template-columns: 22px minmax(0, 1fr) 58px; }
+  .reverse-suggestion > button { grid-column: 2 / -1; justify-self: start; }
   .platform-item { flex-wrap: wrap; }
   .modal-card { margin: 3vh auto; }
 }
