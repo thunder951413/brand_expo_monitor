@@ -90,6 +90,7 @@
           <p class="metric-foot" id="metric-errors">没有异常任务</p>
         </article>
       </div>
+      <div class="metric-scope-note"><b>指标口径</b><span>可见度、平均位次和引用覆盖仅以成功返回的回答为分母；采集失败单独计入成功率，不会被误算成品牌未提及。</span></div>
 
       <div class="decision-grid">
         <article class="panel decision-panel">
@@ -217,10 +218,10 @@
         <i>→</i><div><span>3</span><b>看引用</b><small>资料是否最终出现在回答中</small></div>
         <i>→</i><div><span>4</span><b>定策略</b><small>区分稳定规律与偶发波动</small></div>
       </div>
-      <div class="method-note"><b>证据边界</b><span>平台返回的排名/分数按“平台观测”展示；系统计算的词项重合度只标为“本地相关度”；网页端未暴露的中间过程不会被推测。</span></div>
+      <div class="method-note"><b>证据边界</b><span>召回、选材、引用是独立的可观测阶段，并非所有平台都会同时暴露；因此后一个阶段可能多于前一个阶段。只有同一来源明确暴露召回轨迹时才计算转化率。</span></div>
       <div class="analysis-grid retrieval-grid">
         <article class="panel retrieval-panel">
-          <div class="panel-head"><div><div class="section-kicker">检索漏斗</div><h2>召回 → 选材 → 引用</h2><p>区分平台可观测数据与本地相关度计算</p></div></div>
+          <div class="panel-head"><div><div class="section-kicker">阶段证据</div><h2>可观测召回、选材与引用</h2><p>独立统计平台实际暴露的阶段，不补全不可见过程</p></div></div>
           <div id="retrieval-funnel" class="retrieval-funnel empty-state">运行 API 采集后显示检索阶段</div>
           <div id="retrieval-queries" class="query-chips"></div>
         </article>
@@ -233,7 +234,7 @@
       <article class="panel retrieval-opportunity-panel">
         <div class="panel-head"><div><div class="section-kicker">策略实验</div><h2>来源转化与曝光机会</h2><p>召回多但引用少的网站，可用于分析内容相关性与信源偏好</p></div><button class="text-button" data-go="config">配置自有域名 →</button></div>
         <div id="strategy-insights" class="strategy-insights"></div>
-        <div class="table-wrap bounded-table"><table><thead><tr><th>网站</th><th>召回</th><th>选材</th><th>引用</th><th>引用转化</th><th>平均相关度</th><th>判断</th></tr></thead><tbody id="retrieval-opportunities-body"></tbody></table></div>
+        <div class="table-wrap bounded-table"><table><thead><tr><th>网站</th><th>召回</th><th>选材</th><th>引用</th><th>可验证引用转化</th><th>平均相关度</th><th>判断</th></tr></thead><tbody id="retrieval-opportunities-body"></tbody></table></div>
       </article>
       <article class="panel variability-panel">
         <div class="panel-head"><div><div class="section-kicker">来源稳定性</div><h2>提示词变化与引用规律</h2><p>区分不同问法带来的信源变化与相同条件下的时间波动</p></div><span class="updated-at">持续采样后形成判断</span></div>
@@ -266,6 +267,11 @@
           <div id="prompt-list" class="prompt-list"></div>
         </article>
       </div>
+      <article class="panel prompt-platform-panel">
+        <div class="panel-head"><div><div class="section-kicker">跨平台验证</div><h2>同一提示词在不同 AI 平台的表现</h2><p>提示词列表保持统一；结果按平台 Tab 切换，定位某个平台的曝光缺口</p></div></div>
+        <div id="prompt-platform-tabs" class="platform-tabs" aria-label="按 AI 平台筛选提示词结果"></div>
+        <div class="table-wrap bounded-table"><table><thead><tr><th>提示词</th><th>有效回答</th><th>成功率</th><th>品牌可见度</th><th>平均位次</th><th>引用数</th><th>机会判断</th></tr></thead><tbody id="prompt-platform-body"></tbody></table></div>
+      </article>
       <article class="panel reverse-results-panel">
         <div class="panel-head"><div><div class="section-kicker">反推结果</div><h2>最可能引出目标的提示词</h2><p>预测分用于排序实验优先级，最终仍以多平台真实测试结果为准</p></div><div class="panel-actions"><span class="updated-at" id="reverse-provider">尚未生成</span><button class="text-button" id="toggle-reverse-results" hidden>展开结果</button></div></div>
         <div id="reverse-suggestions" class="reverse-suggestions empty-state">暂无反推结果</div>

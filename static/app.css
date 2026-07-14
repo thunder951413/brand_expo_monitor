@@ -31,6 +31,9 @@ body {
 }
 button, input, textarea, select { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: 3px solid rgba(91,92,226,.28); outline-offset: 2px;
+}
 
 .sidebar {
   position: fixed;
@@ -161,6 +164,8 @@ h2 { margin: 0 0 4px; font-size: 15px; line-height: 1.35; letter-spacing: -.15px
 .ai-composer .button { height: 52px; }
 
 .metric-grid { display: grid; grid-template-columns: 1.15fr repeat(4, 1fr); gap: 12px; margin-bottom: 12px; }
+.metric-scope-note { margin: -2px 0 12px; padding: 8px 11px; border: 1px solid #dde4eb; border-radius: 8px; color: #687586; background: #f8fafc; display: flex; gap: 8px; align-items: baseline; font-size: 10px; }
+.metric-scope-note b { color: #465365; white-space: nowrap; }
 .metric-card {
   min-width: 0; min-height: 136px; padding: 17px 18px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow);
 }
@@ -322,6 +327,10 @@ tbody tr:hover { background: #fafbfe; }
 .opportunity-pill.high { color: #9a474e; background: #fbeaec; }
 .opportunity-pill.medium { color: #8c681f; background: #fff3dc; }
 .opportunity-pill.good { color: #167b59; background: #e7f5ef; }
+.opportunity-pill.neutral { color: #5f6c7e; background: #edf1f5; }
+.unknown-value { color: #8c96a5; cursor: help; }
+.table-warning { margin-top: 2px; color: #a04b52; display: block; }
+.prompt-platform-panel { margin-bottom: 12px; }
 
 .records-panel { min-height: 500px; }
 .module-brief { margin-bottom: 12px; padding: 16px 18px; border: 1px solid #dfe1fa; border-radius: var(--radius); background: linear-gradient(115deg, #f9f9ff, #fff); display: flex; justify-content: space-between; gap: 20px; align-items: center; }
@@ -475,6 +484,7 @@ input:focus, textarea:focus, select:focus { border-color: #9899ef; box-shadow: 0
 .funnel-stage { min-height: 100px; padding: 13px; border: 1px solid var(--line); border-radius: 9px; background: #f8fafc; position: relative; display: grid; align-content: center; gap: 4px; }
 .funnel-stage strong { font-size: 25px; color: #283448; }
 .funnel-stage small, .funnel-stage span { color: #7f8997; font-size: 9px; }
+.funnel-stage em { color: #9aa3af; font-size: 8px; font-style: normal; }
 .funnel-stage i { position: absolute; right: -11px; top: 41px; z-index: 2; color: #a8b0bc; font-style: normal; }
 .funnel-stage.selected { background: #f5f3ff; border-color: #ded9fa; }
 .funnel-stage.cited { background: #eef9f5; border-color: #ccebdd; }
@@ -545,6 +555,24 @@ input:focus, textarea:focus, select:focus { border-color: #9899ef; box-shadow: 0
 .toast { position: fixed; right: 22px; bottom: 22px; z-index: 60; padding: 10px 14px; border-radius: 8px; color: #fff; background: #1a2434; box-shadow: 0 9px 28px rgba(0,0,0,.22); font-size: 10px; opacity: 0; transform: translateY(20px); pointer-events: none; transition: .22s ease; }
 .toast.show { opacity: 1; transform: none; }
 .toast.error { background: #8f3f45; }
+
+/* Desktop readability baseline: research labels must remain legible during long review sessions. */
+.nav-item small, .sidebar-card small, .sidebar-foot, .brand-lockup small { font-size: 10px; }
+.view small { font-size: 10px; }
+.view .section-kicker, .view .updated-at, .view .metric-foot, .view .decision-badge,
+.view .intent-tag, .view .status-pill, .view .hit, .view .mode-tag, .view .record-status,
+.view .opportunity-pill, .view .pattern-pill, .view .trace-stage, .view .extraction-pill,
+.view .api-state, .view .browser-state { font-size: 10px; }
+.view .panel-head p, .view .decision-list p, .view .strategy-insight span,
+.view .platform-strategy p, .view .platform-strategy > span, .view .method-note,
+.view .ai-boundary p, .view .ai-question-list button { font-size: 10px; }
+.workflow-step span, .metric-value span, .decision-list button > span, .decision-list b,
+.confidence-score span, .confidence-factors > span, .landscape-controls > span,
+.landscape-hero > span, .landscape-gap > span, .brand-name-cell em, .score-ring span,
+.health-score p, .health-avatar, .health-status, .platform-chart-head, .bar-line,
+.platform-avatar, .source-meta { font-size: 10px; }
+.view table { font-size: 11px; }
+.view th { font-size: 10px; }
 
 @media (max-width: 1180px) {
   .platform-strategies { grid-template-columns: repeat(2, 1fr); }

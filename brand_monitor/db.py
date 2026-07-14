@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS results (
     status TEXT NOT NULL DEFAULT 'success',
     error_message TEXT NOT NULL DEFAULT '',
     collection_method TEXT NOT NULL DEFAULT '',
+    brand_analyzed INTEGER NOT NULL DEFAULT 0,
     captured_at TEXT NOT NULL,
     FOREIGN KEY(run_id) REFERENCES runs(id) ON DELETE CASCADE,
     FOREIGN KEY(platform_id) REFERENCES platforms(id) ON DELETE CASCADE
@@ -177,6 +178,8 @@ def initialize(path: str | Path, now: str) -> None:
         result_columns = {row[1] for row in conn.execute("PRAGMA table_info(results)")}
         if "collection_method" not in result_columns:
             conn.execute("ALTER TABLE results ADD COLUMN collection_method TEXT NOT NULL DEFAULT ''")
+        if "brand_analyzed" not in result_columns:
+            conn.execute("ALTER TABLE results ADD COLUMN brand_analyzed INTEGER NOT NULL DEFAULT 0")
         settings_columns = {row[1] for row in conn.execute("PRAGMA table_info(settings)")}
         if "owned_domains" not in settings_columns:
             conn.execute("ALTER TABLE settings ADD COLUMN owned_domains TEXT NOT NULL DEFAULT ''")

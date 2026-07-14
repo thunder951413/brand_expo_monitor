@@ -272,6 +272,7 @@ class MonitorService:
             "metrics": dashboard["totals"],
             "platform_performance": dashboard["platforms"],
             "prompt_performance": dashboard["prompts"],
+            "prompt_platform_performance": dashboard.get("prompt_platforms", []),
             "brand_competitive_exposure": dashboard.get("brand_landscape", {}),
             "top_cited_domains": dashboard["sources"],
             "retrieval": {
@@ -321,10 +322,11 @@ class MonitorService:
                 "visibility": "成功回答中出现目标品牌的比例",
                 "rank": "品牌首次出现在列表中的近似位置，只在命中回答中统计",
                 "citation_coverage": "成功回答中至少包含一个外部来源的比例",
+                "competitive_exposure": "只在已完成品牌语义抽取的回答内比较目标与其他品牌；综合曝光分是样本内相对指标，不是市场份额",
                 "local_relevance": "系统计算的词项重合度，不等同于平台内部相关度",
                 "stability": "同平台同提示词多轮引用域名集合的平均重合率；少于 3 轮只能视为样本不足",
             },
-            "evidence_boundary": "只把 API 或网页明确暴露的过程当作观测事实；不可见的搜索、排序和选材过程不得被当作事实补全。演示数据不能代表平台实时表现。",
+            "evidence_boundary": "召回、选材、引用分别独立观测；只有同一来源明确暴露召回轨迹时才计算转化率。不可见过程不得补全，演示数据不能代表平台实时表现。",
         }
         instructions = (
             "你是 BrandScope 的 AI 品牌曝光研究助理。只根据下面的方法论和当前数据回答。"
@@ -414,10 +416,11 @@ class MonitorService:
         cursor = conn.execute(
             """INSERT INTO results
                (run_id, platform_id, answer_text, brand_hit, mention_count, rank_position,
-                citation_count, status, error_message, captured_at, collection_method)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                citation_count, status, error_message, captured_at, collection_method, brand_analyzed)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (run_id, platform_id, collection.answer, int(hit), count, rank, len(sources),
-             collection.status, collection.error, iso_now(), collection.method),
+             collection.status, collection.error, iso_now(), collection.method,
+             int(collection.status == "success" and brand_mentions is not None)),
         )
         conn.executemany(
             "INSERT INTO sources (result_id, url, domain, title) VALUES (?, ?, ?, ?)",
@@ -623,6 +626,9 @@ class MonitorService:
                    COUNT(DISTINCT CASE WHEN o.retrieved=1 THEN o.result_id || '|' || o.url END) retrieved,
                    COUNT(DISTINCT CASE WHEN o.selected=1 THEN o.result_id || '|' || o.url END) selected,
                    COUNT(DISTINCT CASE WHEN o.cited=1 THEN o.result_id || '|' || o.url END) cited,
+                   COUNT(DISTINCT CASE WHEN o.retrieved=1 AND o.selected=1 THEN o.result_id || '|' || o.url END) selected_from_retrieved,
+                   COUNT(DISTINCT CASE WHEN o.retrieved=1 AND o.cited=1 THEN o.result_id || '|' || o.url END) cited_from_retrieved,
+                   COUNT(DISTINCT o.result_id) observed_results,
                    ROUND(AVG(CASE WHEN o.retrieved=1 THEN o.local_relevance END),4) avg_relevance
                    FROM source_observations o JOIN results r ON r.id=o.result_id {result_where}""",
                 result_params,
@@ -653,6 +659,8 @@ class MonitorService:
                    SUM(CASE WHEN o.retrieved=1 THEN 1 ELSE 0 END) retrieved,
                    SUM(CASE WHEN o.selected=1 THEN 1 ELSE 0 END) selected,
                    SUM(CASE WHEN o.cited=1 THEN 1 ELSE 0 END) cited,
+                   SUM(CASE WHEN o.retrieved=1 AND o.selected=1 THEN 1 ELSE 0 END) selected_from_retrieved,
+                   SUM(CASE WHEN o.retrieved=1 AND o.cited=1 THEN 1 ELSE 0 END) cited_from_retrieved,
                    ROUND(AVG(o.local_relevance),4) avg_relevance,
                    ROUND(AVG(o.provider_score),4) avg_provider_score
                    FROM source_observations o JOIN results r ON r.id=o.result_id {result_where}
@@ -676,7 +684,30 @@ class MonitorService:
                    {result_where} GROUP BY ru.prompt_text ORDER BY ru.prompt_text""",
                 result_params,
             )]
+            prompt_platform_stats = [dict(x) for x in conn.execute(
+                f"""SELECT p.name platform_name,p.slug platform_slug,p.color,ru.prompt_text,
+                   COUNT(r.id) collected,
+                   COALESCE(SUM(CASE WHEN r.status='success' THEN 1 ELSE 0 END),0) total,
+                   COALESCE(SUM(CASE WHEN r.status='success' THEN r.brand_hit ELSE 0 END),0) hits,
+                   COALESCE(SUM(CASE WHEN r.status='success' THEN r.citation_count ELSE 0 END),0) citations,
+                   COALESCE(SUM(CASE WHEN r.status!='success' THEN 1 ELSE 0 END),0) errors,
+                   ROUND(AVG(CASE WHEN r.status='success' AND r.brand_hit=1 THEN r.rank_position END),1) avg_rank
+                   FROM runs ru JOIN results r ON r.run_id=ru.id JOIN platforms p ON p.id=r.platform_id
+                   {result_where} GROUP BY p.id,ru.prompt_text ORDER BY p.id,ru.prompt_text""",
+                result_params,
+            )]
             brand_filter = "WHERE r.status='success'" + (" AND r.captured_at >= ?" if cutoff else "")
+            brand_analysis_total = conn.execute(
+                f"""SELECT COUNT(*) FROM results r {brand_filter} AND r.brand_analyzed=1""", result_params,
+            ).fetchone()[0]
+            prompt_analysis_totals = {
+                row[0]: row[1] for row in conn.execute(
+                    f"""SELECT ru.prompt_text,COUNT(r.id) FROM results r
+                       JOIN runs ru ON ru.id=r.run_id {brand_filter} AND r.brand_analyzed=1
+                       GROUP BY ru.prompt_text""",
+                    result_params,
+                )
+            }
             brand_stats_raw = [dict(x) for x in conn.execute(
                 f"""SELECT bm.brand_name,bm.normalized_name,bm.is_target,
                    COUNT(DISTINCT bm.result_id) result_mentions,SUM(bm.mention_count) mention_count,
@@ -770,6 +801,10 @@ class MonitorService:
             stat["citation_rate"] = round(stat["cited_results"] * 100 / stat["total"], 1) if stat["total"] else 0
         for stat in prompt_stats:
             stat["hit_rate"] = round(stat["hits"] * 100 / stat["total"], 1) if stat["total"] else 0
+            stat["success_rate"] = round(stat["total"] * 100 / stat["collected"], 1) if stat["collected"] else 0
+        for stat in prompt_platform_stats:
+            stat["hit_rate"] = round(stat["hits"] * 100 / stat["total"], 1) if stat["total"] else 0
+            stat["success_rate"] = round(stat["total"] * 100 / stat["collected"], 1) if stat["collected"] else 0
         prompt_stats.sort(key=lambda x: (x["hit_rate"], -x["total"], x["prompt_text"]))
 
         def brand_metrics(row, denominator):
@@ -789,20 +824,22 @@ class MonitorService:
             })
             return row
 
-        overall_brands = [brand_metrics(row, totals["total"]) for row in brand_stats_raw]
+        overall_brands = [brand_metrics(row, brand_analysis_total) for row in brand_stats_raw]
         overall_brands.sort(key=lambda row: (-row["exposure_score"], -row["answer_coverage"], row["brand_name"]))
         for index, row in enumerate(overall_brands, 1):
             row["competitive_rank"] = index
-        prompt_totals = {row["prompt_text"]: row["total"] for row in prompt_stats}
         prompt_brand_groups = defaultdict(list)
         for raw in prompt_brand_raw:
-            prompt_brand_groups[raw["prompt_text"]].append(brand_metrics(raw, prompt_totals.get(raw["prompt_text"], 0)))
+            prompt_brand_groups[raw["prompt_text"]].append(
+                brand_metrics(raw, prompt_analysis_totals.get(raw["prompt_text"], 0))
+            )
         by_prompt = []
         for prompt_text, brands in prompt_brand_groups.items():
             brands.sort(key=lambda row: (-row["exposure_score"], -row["answer_coverage"], row["brand_name"]))
             for index, row in enumerate(brands, 1):
                 row["competitive_rank"] = index
-            by_prompt.append({"prompt_text": prompt_text, "total": prompt_totals.get(prompt_text, 0), "brands": brands[:20]})
+            by_prompt.append({"prompt_text": prompt_text,
+                              "total": prompt_analysis_totals.get(prompt_text, 0), "brands": brands[:20]})
         by_prompt.sort(key=lambda row: row["prompt_text"])
         target_brand = next((row for row in overall_brands if row["is_target"]), None)
         leading_other = next((row for row in overall_brands if not row["is_target"]), None)
@@ -811,22 +848,27 @@ class MonitorService:
             return any(domain == item or domain.endswith("." + item) for item in owned_domains)
         for row in domain_funnel:
             row["owned"] = owned(row["domain"])
-            row["selection_rate"] = round(row["selected"] * 100 / row["retrieved"], 1) if row["retrieved"] else 0
-            row["citation_rate"] = round(row["cited"] * 100 / row["retrieved"], 1) if row["retrieved"] else 0
+            row["selection_rate"] = round(row["selected_from_retrieved"] * 100 / row["retrieved"], 1) if row["retrieved"] else None
+            row["citation_rate"] = round(row["cited_from_retrieved"] * 100 / row["retrieved"], 1) if row["retrieved"] else None
+            row["evidence_scope"] = "full_trace" if row["retrieved"] else "final_only" if row["cited"] else "selection_only"
         owned_rows = [row for row in domain_funnel if row["owned"]]
         funnel["owned_retrieved"] = sum(row["retrieved"] for row in owned_rows)
         funnel["owned_selected"] = sum(row["selected"] for row in owned_rows)
         funnel["owned_cited"] = sum(row["cited"] for row in owned_rows)
-        funnel["selection_rate"] = round(funnel["selected"] * 100 / funnel["retrieved"], 1) if funnel["retrieved"] else 0
-        funnel["citation_rate"] = round(funnel["cited"] * 100 / funnel["retrieved"], 1) if funnel["retrieved"] else 0
+        funnel["selection_rate"] = round(funnel["selected_from_retrieved"] * 100 / funnel["retrieved"], 1) if funnel["retrieved"] else None
+        funnel["citation_rate"] = round(funnel["cited_from_retrieved"] * 100 / funnel["retrieved"], 1) if funnel["retrieved"] else None
         opportunities = sorted(
-            [row for row in domain_funnel if row["retrieved"] and not row["owned"]],
-            key=lambda row: (-row["retrieved"], row["citation_rate"], -float(row["avg_relevance"] or 0)),
+            [row for row in domain_funnel if (row["retrieved"] or row["selected"] or row["cited"]) and not row["owned"]],
+            key=lambda row: (-row["retrieved"], -row["cited"], -row["selected"],
+                             -float(row["avg_relevance"] or 0)),
         )[:12]
         insights = []
         if not owned_domains:
             insights.append({"level": "setup", "title": "先配置品牌自有域名",
                              "detail": "配置官网及内容站域名后，系统才能计算自有内容在召回、选材和引用阶段的流失位置。"})
+        elif funnel["owned_cited"] and not funnel["owned_retrieved"]:
+            insights.append({"level": "good", "title": "自有内容已被引用，但平台未暴露中间检索链路",
+                             "detail": "当前只能确认最终引用，不能据此推断召回排名或选材转化；继续使用能返回检索轨迹的 API 采集验证。"})
         elif not funnel["owned_retrieved"]:
             insights.append({"level": "high", "title": "自有内容尚未进入搜索召回",
                              "detail": "优先围绕实际搜索词建设可索引页面，并强化标题、问题表述、结构化答案和站点可抓取性。"})
@@ -839,7 +881,8 @@ class MonitorService:
         else:
             insights.append({"level": "good", "title": "自有内容已经形成引用",
                              "detail": "继续跟踪不同提示词和平台的引用稳定性，避免只依赖单一页面或单一搜索词。"})
-        top_cited = sorted(domain_funnel, key=lambda row: (-row["cited"], -row["retrieved"]))[:3]
+        top_cited = sorted((row for row in domain_funnel if row["cited"]),
+                           key=lambda row: (-row["cited"], -row["retrieved"]))[:3]
         if top_cited:
             insights.append({"level": "info", "title": "重点研究高引用信源",
                              "detail": "当前高引用网站：" + "、".join(row["domain"] for row in top_cited) + "。分析其内容结构、更新时间和可验证证据。"})
@@ -948,9 +991,11 @@ class MonitorService:
                 "diagnosis": diagnosis, "action": action,
             })
         return {"totals": totals, "platforms": platform_stats, "sources": source_stats,
-                "prompts": prompt_stats, "results": results, "trend": list(reversed(trend)), "days": days,
+                "prompts": prompt_stats, "prompt_platforms": prompt_platform_stats,
+                "results": results, "trend": list(reversed(trend)), "days": days,
                 "brand_landscape": {"overall": overall_brands[:30], "by_prompt": by_prompt,
                                     "target": target_brand, "leading_other": leading_other,
+                                    "analyzed_results": brand_analysis_total,
                                     "method_note": "明确顺序由规则计算；品牌归一、语境优先级与推荐倾向优先使用 AI，失败时回退规则。"},
                 "retrieval": {"funnel": funnel, "stage_sources": stage_sources,
                               "domains": domain_funnel, "queries": query_stats,

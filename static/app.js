@@ -1,5 +1,5 @@
 const state = { config: null, browsers: [], apis: [], apiConfig: null, dashboard: null, reverse: null, view: 'dashboard', days: 30,
-  ai: { messages: [], initialized: false, loading: false, context: null }, brandPrompt: '', retrievalPlatform: '',
+  ai: { messages: [], initialized: false, loading: false, context: null }, brandPrompt: '', retrievalPlatform: '', promptPlatform: '',
   stageSourcesExpanded: false, promptListExpanded: false, reverseResultsExpanded: false };
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -42,7 +42,11 @@ function switchView(view) {
   state.view = view;
   $$('.view').forEach(element => element.classList.remove('active'));
   $(`#${view}-view`).classList.add('active');
-  $$('.nav-item').forEach(element => element.classList.toggle('active', element.dataset.view === view));
+  $$('.nav-item').forEach(element => {
+    const active = element.dataset.view === view;
+    element.classList.toggle('active', active);
+    if (active) element.setAttribute('aria-current', 'page'); else element.removeAttribute('aria-current');
+  });
   $$('.workflow-step').forEach(element => element.classList.toggle('active', element.dataset.go === view));
   const names = {
     dashboard: ['AI 品牌可见性', '概览', '判断品牌是否被 AI 看见，以及最值得优先处理的问题。'],
@@ -158,11 +162,12 @@ function renderPromptPortfolio() {
   const intents = [...new Set(active.map(item => promptIntent(item.text)))];
   const tested = new Set((state.dashboard?.prompts || []).filter(item => item.total).map(item => item.prompt_text));
   const weak = (state.dashboard?.prompts || []).filter(item => item.total && item.hit_rate < 50).length;
+  const testedCount = active.filter(item => tested.has(item.text)).length;
   element.innerHTML = [
     ['启用问题', active.length, `共 ${prompts.length} 个问题`],
     ['意图覆盖', intents.length, intents.join('、') || '尚未分类'],
-    ['已有样本', active.filter(item => tested.has(item.text)).length, '至少完成过一次采集'],
-    ['曝光缺口', weak, weak ? '优先扩展相近问法' : '当前没有低命中问题']
+    ['已有样本', testedCount, '至少完成过一次采集'],
+    ['曝光缺口', weak, !testedCount ? '尚无样本，等待建立基线' : weak ? '优先扩展相近问法' : '当前没有低命中问题']
   ].map((item, index) => `<article class="portfolio-card"><span>0${index + 1}</span><div><strong>${item[1]}</strong><b>${item[0]}</b><small>${escapeHTML(item[2])}</small></div></article>`).join('');
 }
 
@@ -297,15 +302,15 @@ async function loadDashboard() {
 function renderDashboard() {
   const dashboard = state.dashboard;
   const totals = dashboard.totals;
-  $('#metric-rate').textContent = `${totals.hit_rate}%`;
+  $('#metric-rate').textContent = totals.total ? `${totals.hit_rate}%` : '—';
   $('#metric-hit').textContent = `${totals.hits} / ${totals.total} 次命中`;
   $('#metric-rate-bar').style.width = `${totals.hit_rate}%`;
   $('#metric-rank').textContent = totals.avg_rank ? `#${totals.avg_rank}` : '—';
-  $('#metric-citation-rate').textContent = `${totals.citation_rate}%`;
+  $('#metric-citation-rate').textContent = totals.total ? `${totals.citation_rate}%` : '—';
   $('#metric-citations').textContent = `${totals.citations} 条引用`;
   $('#metric-domains').textContent = totals.unique_sources;
   $('#top-source-note').textContent = dashboard.sources.length ? `最常引用 ${dashboard.sources[0].domain}` : '暂无来源数据';
-  $('#metric-success').textContent = `${totals.success_rate}%`;
+  $('#metric-success').textContent = totals.collected ? `${totals.success_rate}%` : '—';
   $('#metric-collected').textContent = `${totals.collected} 次采集`;
   $('#metric-errors').textContent = totals.errors ? `${totals.errors} 次需要处理` : '没有异常任务';
   $('#updated-at').textContent = totals.last_capture ? `更新于 ${formatTime(totals.last_capture)}` : '尚未采集';
@@ -316,6 +321,7 @@ function renderDashboard() {
   renderPlatformChart(dashboard.platforms);
   renderSourceChart(dashboard.sources);
   renderPromptPerformance(dashboard.prompts);
+  renderPromptPlatforms(dashboard);
   renderBrandLandscape(dashboard.brand_landscape || {});
   renderRetrieval(dashboard.retrieval || {});
   renderTables();
@@ -333,7 +339,8 @@ function renderBrandLandscape(landscape) {
   const brands = group ? group.brands : overall;
   const target = brands.find(item => item.is_target);
   const leadingOther = brands.find(item => !item.is_target);
-  $('#brand-analysis-method').textContent = landscape.method_note || '规则 / AI 混合识别';
+  const analyzed = group ? group.total : landscape.analyzed_results;
+  $('#brand-analysis-method').textContent = `${landscape.method_note || '规则 / AI 混合识别'} · ${analyzed || 0} 条竞争分析样本`;
   $('#brand-landscape-summary').innerHTML = `<div class="landscape-hero target"><span>目标品牌</span><b>${escapeHTML(target?.brand_name || state.config.settings.brand_name)}</b><strong>${target ? `${target.answer_coverage}%` : '暂无数据'}</strong><small>${target ? `竞争位次 #${target.competitive_rank} · 平均优先 #${target.avg_priority || '—'}` : '完成新一轮采集后生成'}</small></div>
     <div class="landscape-hero competitor"><span>领先其他品牌</span><b>${escapeHTML(leadingOther?.brand_name || '尚未识别')}</b><strong>${leadingOther ? `${leadingOther.answer_coverage}%` : '—'}</strong><small>${leadingOther ? `竞争位次 #${leadingOther.competitive_rank} · 综合曝光 ${leadingOther.exposure_score}` : '回答中暂无其他品牌数据'}</small></div>
     <div class="landscape-gap"><span>目标与领先品牌差距</span><b>${target && leadingOther ? `${Math.round((target.exposure_score - leadingOther.exposure_score) * 10) / 10}` : '—'}</b><small>综合曝光分差；正值代表目标品牌领先</small></div>`;
@@ -356,8 +363,8 @@ function renderDecisionSummary(dashboard) {
   if (totals.total && totals.citation_rate < 60) actions.push(['提升引用', `引用覆盖率 ${totals.citation_rate}%，需要查看高召回未引用网站和内容证据缺口。`, 'relevance']);
   if (!actions.length) actions.push(['保持验证', '当前曝光与采集较稳定，继续按固定提示词重复采样，验证规律能否持续。', 'relevance']);
   const displayed = actions.slice(0, 3);
-  $('#decision-level').textContent = totals.errors || totals.hit_rate < 50 ? '高优先级' : totals.hit_rate < 80 ? '需要优化' : '保持观察';
-  $('#decision-level').className = `decision-badge ${totals.errors || totals.hit_rate < 50 ? 'high' : totals.hit_rate < 80 ? 'medium' : 'good'}`;
+  $('#decision-level').textContent = !totals.collected ? '等待数据' : totals.errors || totals.hit_rate < 50 ? '高优先级' : totals.hit_rate < 80 ? '需要优化' : '保持观察';
+  $('#decision-level').className = `decision-badge ${!totals.collected ? '' : totals.errors || totals.hit_rate < 50 ? 'high' : totals.hit_rate < 80 ? 'medium' : 'good'}`;
   $('#decision-list').className = 'decision-list';
   $('#decision-list').innerHTML = displayed.map((item, index) => `<button data-go="${item[2]}"><span>${index + 1}</span><div><b>${escapeHTML(item[0])}</b><p>${escapeHTML(item[1])}</p></div><i>→</i></button>`).join('');
 
@@ -397,13 +404,14 @@ function renderRetrieval(retrieval) {
   } else {
     element.className = 'retrieval-funnel';
     element.innerHTML = [
-      ['召回资料', funnel.retrieved || 0, funnel.owned_retrieved || 0, 'retrieved'],
-      ['进入选材', funnel.selected || 0, funnel.owned_selected || 0, 'selected'],
-      ['最终引用', funnel.cited || 0, funnel.owned_cited || 0, 'cited']
-    ].map((item, index) => `<div class="funnel-stage ${item[3]}"><small>${item[0]}</small><strong>${item[1]}</strong><span>自有域名 ${item[2]}</span>${index < 2 ? '<i>→</i>' : ''}</div>`).join('');
+      ['平台暴露召回', funnel.retrieved || 0, funnel.owned_retrieved || 0, 'retrieved', '独立观察'],
+      ['可观测选材', funnel.selected || 0, funnel.owned_selected || 0, 'selected', funnel.retrieved ? `${funnel.selected_from_retrieved || 0} 条具备召回轨迹` : '召回轨迹未暴露'],
+      ['最终引用', funnel.cited || 0, funnel.owned_cited || 0, 'cited', funnel.retrieved ? `${funnel.cited_from_retrieved || 0} 条具备召回轨迹` : '召回轨迹未暴露']
+    ].map(item => `<div class="funnel-stage ${item[3]}"><small>${item[0]}</small><strong>${item[1]}</strong><span>自有域名 ${item[2]}</span><em>${item[4]}</em></div>`).join('');
   }
   const queries = retrieval.queries || [];
   $('#retrieval-queries').innerHTML = queries.slice(0, 8).map(item => `<span title="${escapeHTML(item.provider)}">${escapeHTML(item.query_text)} <b>×${item.count}</b></span>`).join('') || '<small>平台未返回实际搜索词</small>';
+  if (funnel.retrieved) $('#retrieval-queries').insertAdjacentHTML('beforeend', `<small class="trace-rate">同轨迹选材率 ${funnel.selection_rate ?? '—'}% · 引用率 ${funnel.citation_rate ?? '—'}%</small>`);
   const stages = { retrieved: '召回', selected: '选材', cited: '引用' };
   const rawStageRows = retrieval.stage_sources || [];
   const platforms = (state.config?.platforms || []).filter(platform => platform.active);
@@ -432,8 +440,11 @@ function renderRetrieval(retrieval) {
   const opportunities = retrieval.opportunities || [];
   $('#strategy-insights').innerHTML = (retrieval.insights || []).map(item => `<div class="strategy-insight ${escapeHTML(item.level)}"><b>${escapeHTML(item.title)}</b><span>${escapeHTML(item.detail)}</span></div>`).join('');
   $('#retrieval-opportunities-body').innerHTML = opportunities.map(row => {
-    const verdict = row.citation_rate >= 50 ? ['高引用信源', 'good'] : row.selected ? ['选材后流失', 'medium'] : ['召回未选用', 'high'];
-    return `<tr><td>${escapeHTML(row.domain)}</td><td>${row.retrieved}</td><td>${row.selected}</td><td>${row.cited}</td><td>${row.citation_rate}%</td><td>${Math.round((row.avg_relevance || 0) * 100)}%</td><td><span class="opportunity-pill ${verdict[1]}">${verdict[0]}</span></td></tr>`;
+    const verdict = row.citation_rate == null
+      ? row.cited ? ['仅最终引用可见', 'neutral'] : ['仅选材可见', 'neutral']
+      : row.citation_rate >= 50 ? ['高引用信源', 'good'] : row.selected_from_retrieved ? ['召回后引用不足', 'medium'] : ['召回未选用', 'high'];
+    const rate = row.citation_rate == null ? '<span class="unknown-value" title="平台没有暴露该来源的召回轨迹">—</span>' : `${row.citation_rate}%`;
+    return `<tr><td>${escapeHTML(row.domain)}</td><td>${row.retrieved}</td><td>${row.selected}</td><td>${row.cited}</td><td>${rate}</td><td>${Math.round((row.avg_relevance || 0) * 100)}%</td><td><span class="opportunity-pill ${verdict[1]}">${verdict[0]}</span></td></tr>`;
   }).join('') || '<tr><td colspan="7">配置 API 并运行采集后生成策略线索</td></tr>';
 
   const strategies = retrieval.platform_strategies || [];
@@ -514,7 +525,7 @@ function renderHealth(platforms, totals) {
   $('#health-ring').style.setProperty('--score', totals.success_rate);
   $('#health-score-value').textContent = `${totals.success_rate}%`;
   $('#health-summary').textContent = totals.collected ? `${totals.total} 次成功，${totals.errors} 次异常` : '尚无采集';
-  $('#health-detail').textContent = totals.errors ? '优先检查登录失效或页面结构变化' : '当前采集链路运行正常';
+  $('#health-detail').textContent = !totals.collected ? '运行一次监测后评估平台链路' : totals.errors ? '优先检查登录失效或页面结构变化' : '当前采集链路运行正常';
   $('#platform-health').innerHTML = platforms.map(platform => {
     const browser = state.browsers.find(item => item.slug === platform.slug) || { state: 'closed' };
     let label = browserStateName(browser.state);
@@ -581,9 +592,31 @@ function renderPromptPerformance(items) {
   }).join('');
 }
 
+function renderPromptPlatforms(dashboard) {
+  const platforms = (state.config?.platforms || []).filter(platform => platform.active);
+  if (state.promptPlatform && !platforms.some(platform => platform.slug === state.promptPlatform)) state.promptPlatform = '';
+  const rowsByPlatform = dashboard.prompt_platforms || [];
+  $('#prompt-platform-tabs').innerHTML = [
+    { slug: '', name: '全部平台', color: '#76798f' },
+    ...platforms
+  ].map(platform => {
+    const rows = platform.slug ? rowsByPlatform.filter(row => row.platform_slug === platform.slug) : dashboard.prompts;
+    const tested = rows.filter(row => row.collected).length;
+    const active = state.promptPlatform === platform.slug;
+    return `<button type="button" data-prompt-platform="${escapeHTML(platform.slug)}" class="${active ? 'active' : ''}" aria-pressed="${active}"><i style="background:${escapeHTML(platform.color)}"></i>${escapeHTML(platform.name)}<span>${tested}</span></button>`;
+  }).join('');
+  const rows = (state.promptPlatform
+    ? rowsByPlatform.filter(row => row.platform_slug === state.promptPlatform)
+    : dashboard.prompts).slice().sort((a, b) => a.hit_rate - b.hit_rate || b.errors - a.errors || a.prompt_text.localeCompare(b.prompt_text));
+  $('#prompt-platform-body').innerHTML = rows.map(row => {
+    const opportunity = opportunityFor(row);
+    return `<tr><td title="${escapeHTML(row.prompt_text)}">${escapeHTML(row.prompt_text)}</td><td>${row.total}</td><td>${row.success_rate}%${row.errors ? `<small class="table-warning">${row.errors} 次异常</small>` : ''}</td><td><b>${row.hit_rate}%</b></td><td>${row.avg_rank ? `#${row.avg_rank}` : '—'}</td><td>${row.citations}</td><td><span class="opportunity-pill ${opportunity[1]}">${opportunity[0]}</span></td></tr>`;
+  }).join('') || '<tr><td colspan="7">该平台尚无提示词测试数据。</td></tr>';
+}
+
 function recordRow(result) {
   const actualMode = result.collection_method || result.mode;
-  return `<tr data-result="${result.id}">
+  return `<tr data-result="${result.id}" role="button" tabindex="0" aria-label="查看 ${escapeHTML(result.platform_name)} 对“${escapeHTML(result.prompt_text)}”的完整回答证据">
     <td>${formatTime(result.captured_at)}</td>
     <td><span class="platform-tag"><i style="background:${result.color}"></i>${escapeHTML(result.platform_name)}</span></td>
     <td title="${escapeHTML(result.prompt_text)}">${escapeHTML(result.prompt_text)}</td>
@@ -726,6 +759,11 @@ document.addEventListener('click', async event => {
     state.retrievalPlatform = retrievalTab.dataset.retrievalPlatform;
     renderRetrieval(state.dashboard?.retrieval || {});
   }
+  const promptPlatformTab = event.target.closest('[data-prompt-platform]');
+  if (promptPlatformTab) {
+    state.promptPlatform = promptPlatformTab.dataset.promptPlatform;
+    renderPromptPlatforms(state.dashboard || { prompts: [], prompt_platforms: [] });
+  }
   if (event.target.closest('#toggle-stage-sources')) {
     state.stageSourcesExpanded = !state.stageSourcesExpanded;
     renderRetrieval(state.dashboard?.retrieval || {});
@@ -777,6 +815,14 @@ document.addEventListener('click', async event => {
       suggestion.disabled = true; suggestion.textContent = '已加入';
       await loadConfig(); toast('反推提示词已加入实验列表');
     } catch (error) { toast(error.message, true); }
+  }
+});
+
+document.addEventListener('keydown', event => {
+  const row = event.target.closest('[data-result]');
+  if (row && (event.key === 'Enter' || event.key === ' ')) {
+    event.preventDefault();
+    showResult(row.dataset.result);
   }
 });
 
