@@ -15,14 +15,15 @@ from brand_monitor.webdriver_collector import WebDriverManager
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = os.environ.get("BRAND_MONITOR_DB", str(BASE_DIR / "instance" / "monitor.db"))
+DATA_DIR = Path(os.environ.get("BRAND_MONITOR_DATA_DIR", str(BASE_DIR / "instance")))
+DB_PATH = os.environ.get("BRAND_MONITOR_DB", str(DATA_DIR / "monitor.db"))
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder=str(BASE_DIR / "templates"), static_folder=str(BASE_DIR / "static"))
 app.json.ensure_ascii = False
 initialize(DB_PATH, datetime.now().astimezone().isoformat(timespec="seconds"))
-webdriver_manager = WebDriverManager(BASE_DIR / "instance" / "browser_profiles")
+webdriver_manager = WebDriverManager(DATA_DIR / "browser_profiles")
 api_config_store = ApiConfigStore(
-    os.environ.get("BRAND_MONITOR_API_CONFIG", str(BASE_DIR / "instance" / "api_config.json"))
+    os.environ.get("BRAND_MONITOR_API_CONFIG", str(DATA_DIR / "api_config.json"))
 )
 api_collector = OfficialApiCollector(api_config_store)
 atexit.register(webdriver_manager.close_all)

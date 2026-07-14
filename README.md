@@ -2,6 +2,21 @@
 
 面向豆包、千问、文心一言、DeepSeek、元宝等 AI 问答平台的品牌提及与引用来源监测 MVP。默认目标品牌为“瑞思迈ResMed”。
 
+## 桌面版下载
+
+GitHub Releases 会提供 Electron 桌面安装包：
+
+| 系统 | 架构 | 安装包 |
+| --- | --- | --- |
+| macOS | Apple Silicon | `.dmg`、`.zip` |
+| macOS | Intel | `.dmg`、`.zip` |
+| Windows | x64 | NSIS `.exe`、`.zip` |
+| Linux | x64 | `.AppImage`、`.deb` |
+
+打开项目的 [Releases 页面](https://github.com/thunder951413/brand_expo_monitor/releases) 下载最新版。桌面版会在系统应用数据目录中独立保存数据库、API 配置和浏览器登录资料，升级应用不会覆盖监测数据。
+
+当前自动构建产物未进行 Apple Developer ID 公证或 Windows Authenticode 签名，macOS/Windows 首次运行时可能显示系统安全提醒。正式对外分发时，应在 GitHub Actions 中配置相应代码签名与公证凭证。
+
 ## 已实现
 
 - 品牌名与多个中英文别名配置，英文匹配不区分大小写
@@ -172,3 +187,24 @@ Webhook 应返回：
 ```bash
 python3 -m unittest discover -s tests -v
 ```
+
+## Electron 多平台构建与发布
+
+Electron 负责桌面窗口和生命周期，Flask 后端通过 PyInstaller 打包为各平台原生可执行文件。运行数据统一写入 Electron 的 `userData/data`，不会写入只读的应用安装目录。
+
+本地构建当前系统对应版本：
+
+```bash
+npm ci
+python3 -m pip install -r requirements.txt "pyinstaller>=6.21,<7"
+
+# macOS Apple Silicon
+npm run dist:mac:arm64
+
+# 其他目标由对应操作系统执行
+npm run dist:mac:x64
+npm run dist:win:x64
+npm run dist:linux:x64
+```
+
+推送 `v*` 标签时，[Release workflow](.github/workflows/release.yml) 会分别在 macOS arm64、macOS Intel、Windows x64 和 Linux x64 runner 上运行测试与构建，并把全部安装包合并发布到同一个 GitHub Release。

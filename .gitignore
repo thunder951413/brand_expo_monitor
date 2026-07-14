@@ -20,3 +20,10 @@ instance/
 .idea/
 .vscode/
 
+# Electron/PyInstaller build output
+node_modules/
+dist/
+dist-backend/
+build-backend/
+*.spec
+npm-debug.log*

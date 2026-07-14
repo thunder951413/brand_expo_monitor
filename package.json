@@ -1,0 +1,60 @@
+{
+  "name": "brandscope-desktop",
+  "version": "0.1.0",
+  "description": "AI 品牌曝光与引用来源监测桌面应用",
+  "main": "electron/main.js",
+  "author": "thunder951413",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start:electron": "electron .",
+    "build:backend": "python scripts/build_backend.py",
+    "dist:mac:arm64": "npm run build:backend && electron-builder --mac --arm64 --publish never",
+    "dist:mac:x64": "npm run build:backend && electron-builder --mac --x64 --publish never",
+    "dist:win:x64": "npm run build:backend && electron-builder --win --x64 --publish never",
+    "dist:linux:x64": "npm run build:backend && electron-builder --linux --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "43.1.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "com.thunder951413.brandscope",
+    "productName": "BrandScope",
+    "asar": true,
+    "files": [
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "dist-backend",
+        "to": "backend",
+        "filter": ["**/*"]
+      }
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "artifactName": "BrandScope-${version}-${os}-${arch}.${ext}",
+    "mac": {
+      "category": "public.app-category.business",
+      "target": ["dmg", "zip"]
+    },
+    "win": {
+      "target": ["nsis", "zip"]
+    },
+    "linux": {
+      "category": "Office",
+      "target": ["AppImage", "deb"]
+    },
+    "dmg": {
+      "title": "BrandScope ${version}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
+
