@@ -72,6 +72,8 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual(dashboard["totals"]["citation_rate"], 80.0)
         self.assertEqual(dashboard["totals"]["unique_sources"], 4)
         self.assertEqual(len(dashboard["prompts"]), 1)
+        self.assertTrue(dashboard["retrieval"]["stage_sources"])
+        self.assertTrue(all(item.get("platform_slug") for item in dashboard["retrieval"]["stage_sources"]))
         self.assertGreaterEqual(len(dashboard["brand_landscape"]["overall"]), 4)
         self.assertTrue(dashboard["brand_landscape"]["target"]["is_target"])
         self.assertTrue(all("brand_mentions" in result for result in dashboard["results"]))

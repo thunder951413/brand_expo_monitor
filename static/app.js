@@ -1,5 +1,6 @@
 const state = { config: null, browsers: [], apis: [], apiConfig: null, dashboard: null, reverse: null, view: 'dashboard', days: 30,
-  ai: { messages: [], initialized: false, loading: false, context: null }, brandPrompt: '' };
+  ai: { messages: [], initialized: false, loading: false, context: null }, brandPrompt: '', retrievalPlatform: '',
+  stageSourcesExpanded: false, promptListExpanded: false, reverseResultsExpanded: false };
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const escapeHTML = (value = '') => String(value).replace(/[&<>'"]/g, char => ({
@@ -109,11 +110,18 @@ function renderConfig() {
       <label class="switch"><input type="checkbox" data-toggle="platforms" data-id="${platform.id}" ${platform.active ? 'checked' : ''}><span></span></label>
     </div>`;
   }).join('');
-  $('#prompt-list').innerHTML = prompts.map(prompt => `<div class="prompt-item">
-    <span class="intent-tag">${promptIntent(prompt.text)}</span><span class="prompt-text">${escapeHTML(prompt.text)}</span>
+  const promptList = $('#prompt-list');
+  promptList.className = `prompt-list${state.promptListExpanded ? ' expanded' : ''}`;
+  promptList.innerHTML = prompts.map(prompt => `<div class="prompt-item">
+    <span class="intent-tag">${promptIntent(prompt.text)}</span><span class="prompt-text" title="${escapeHTML(prompt.text)}">${escapeHTML(prompt.text)}</span>
     <label class="switch"><input type="checkbox" data-toggle="prompts" data-id="${prompt.id}" ${prompt.active ? 'checked' : ''}><span></span></label>
     <button class="delete-btn" data-delete="${prompt.id}" title="删除">×</button>
   </div>`).join('');
+  const promptToggle = $('#toggle-prompt-list');
+  if (promptToggle) {
+    promptToggle.hidden = prompts.length <= 5;
+    promptToggle.textContent = state.promptListExpanded ? '收起列表' : `展开列表（${prompts.length}）`;
+  }
   const activeCount = $('#active-prompt-count');
   if (activeCount) activeCount.textContent = prompts.filter(prompt => prompt.active).length;
   renderPromptPortfolio();
@@ -165,7 +173,7 @@ function renderReverseSuggestions(data) {
   const existing = new Set(state.config.prompts.map(item => item.text.toLocaleLowerCase()));
   const suggestions = data.suggestions || [];
   const element = $('#reverse-suggestions');
-  element.className = suggestions.length ? 'reverse-suggestions' : 'reverse-suggestions empty-state';
+  element.className = suggestions.length ? `reverse-suggestions${state.reverseResultsExpanded ? ' expanded' : ''}` : 'reverse-suggestions empty-state';
   element.innerHTML = suggestions.map((item, index) => {
     const added = existing.has(item.text.toLocaleLowerCase());
     return `<article class="reverse-suggestion">
@@ -175,6 +183,11 @@ function renderReverseSuggestions(data) {
       <button class="button ghost" data-add-suggestion="${escapeHTML(item.text)}" ${added ? 'disabled' : ''}>${added ? '已加入' : '加入列表'}</button>
     </article>`;
   }).join('') || '没有生成新的提示词；可调整最终目标后重试。';
+  const toggle = $('#toggle-reverse-results');
+  if (toggle) {
+    toggle.hidden = suggestions.length <= 5;
+    toggle.textContent = state.reverseResultsExpanded ? '收起结果' : `展开结果（${suggestions.length}）`;
+  }
 }
 
 function renderApiConfig() {
@@ -357,6 +370,24 @@ function renderDecisionSummary(dashboard) {
     <div class="confidence-factors"><span><b>${totals.total}</b>有效回答<small>${sampleScore >= 80 ? '样本较充分' : '建议继续积累'}</small></span><span><b>${totals.success_rate}%</b>采集成功<small>${totals.errors ? '含异常任务' : '链路正常'}</small></span><span><b>${repeated}</b>重复基线<small>${repeated ? '可判断波动' : '尚不能判断随机性'}</small></span></div>`;
 }
 
+function aggregateStageSources(rows, platformSlug = '') {
+  const grouped = new Map();
+  rows.filter(row => !platformSlug || row.platform_slug === platformSlug).forEach(row => {
+    const key = `${row.stage}|${row.domain}`;
+    const current = grouped.get(key) || { ...row, count: 0, relevanceTotal: 0, providerTotal: 0 };
+    const count = Number(row.count || 0);
+    current.count += count;
+    current.relevanceTotal += Number(row.avg_relevance || 0) * count;
+    current.providerTotal += Number(row.avg_provider_score || 0) * count;
+    grouped.set(key, current);
+  });
+  return [...grouped.values()].map(row => ({
+    ...row,
+    avg_relevance: row.count ? row.relevanceTotal / row.count : 0,
+    avg_provider_score: row.count ? row.providerTotal / row.count : 0
+  })).sort((a, b) => a.stage.localeCompare(b.stage) || b.count - a.count || a.domain.localeCompare(b.domain));
+}
+
 function renderRetrieval(retrieval) {
   const funnel = retrieval.funnel || {};
   const element = $('#retrieval-funnel');
@@ -374,12 +405,30 @@ function renderRetrieval(retrieval) {
   const queries = retrieval.queries || [];
   $('#retrieval-queries').innerHTML = queries.slice(0, 8).map(item => `<span title="${escapeHTML(item.provider)}">${escapeHTML(item.query_text)} <b>×${item.count}</b></span>`).join('') || '<small>平台未返回实际搜索词</small>';
   const stages = { retrieved: '召回', selected: '选材', cited: '引用' };
-  const stageRows = retrieval.stage_sources || [];
-  $('#stage-sources').className = stageRows.length ? 'stage-sources' : 'stage-sources empty-state';
-  $('#stage-sources').innerHTML = stageRows.length ? Object.entries(stages).map(([key, name]) => {
-    const rows = stageRows.filter(row => row.stage === key).slice(0, 6);
-    return `<div><b>${name}</b>${rows.map(row => `<span><em>${escapeHTML(row.domain)}</em><strong>${row.count}</strong><small>相关度 ${Math.round((row.avg_relevance || 0) * 100)}%</small></span>`).join('') || '<small>无可观测数据</small>'}</div>`;
-  }).join('') : '尚无检索轨迹';
+  const rawStageRows = retrieval.stage_sources || [];
+  const platforms = (state.config?.platforms || []).filter(platform => platform.active);
+  if (state.retrievalPlatform && !platforms.some(platform => platform.slug === state.retrievalPlatform)) state.retrievalPlatform = '';
+  const tabs = $('#retrieval-platform-tabs');
+  tabs.innerHTML = [
+    { slug: '', name: '全部平台', color: '#76798f' },
+    ...platforms
+  ].map(platform => {
+    const domains = new Set(rawStageRows.filter(row => !platform.slug || row.platform_slug === platform.slug).map(row => row.domain)).size;
+    const active = state.retrievalPlatform === platform.slug;
+    return `<button type="button" data-retrieval-platform="${escapeHTML(platform.slug)}" class="${active ? 'active' : ''}" aria-pressed="${active}"><i style="background:${escapeHTML(platform.color)}"></i>${escapeHTML(platform.name)}<span>${domains}</span></button>`;
+  }).join('');
+  const stageRows = aggregateStageSources(rawStageRows, state.retrievalPlatform);
+  const stageElement = $('#stage-sources');
+  stageElement.className = stageRows.length ? `stage-sources${state.stageSourcesExpanded ? ' expanded' : ''}` : 'stage-sources empty-state';
+  stageElement.innerHTML = stageRows.length ? Object.entries(stages).map(([key, name]) => {
+    const rows = stageRows.filter(row => row.stage === key);
+    return `<div class="stage-source-column"><b>${name}<em>${rows.length} 个网站</em></b><div class="stage-source-list">${rows.map(row => `<span title="${escapeHTML(row.domain)}"><em>${escapeHTML(row.domain)}</em><strong>${row.count}</strong><small>本地相关度 ${Math.round((row.avg_relevance || 0) * 100)}%</small></span>`).join('') || '<small>无可观测数据</small>'}</div></div>`;
+  }).join('') : `${state.retrievalPlatform ? '该平台' : '当前范围'}尚无检索轨迹`;
+  const stageToggle = $('#toggle-stage-sources');
+  if (stageToggle) {
+    stageToggle.hidden = !Object.keys(stages).some(key => stageRows.filter(row => row.stage === key).length > 6);
+    stageToggle.textContent = state.stageSourcesExpanded ? '收起列表' : '展开列表';
+  }
   const opportunities = retrieval.opportunities || [];
   $('#strategy-insights').innerHTML = (retrieval.insights || []).map(item => `<div class="strategy-insight ${escapeHTML(item.level)}"><b>${escapeHTML(item.title)}</b><span>${escapeHTML(item.detail)}</span></div>`).join('');
   $('#retrieval-opportunities-body').innerHTML = opportunities.map(row => {
@@ -670,6 +719,24 @@ document.addEventListener('click', async event => {
     state.days = Number(range.dataset.days);
     $$('.range-group button').forEach(button => button.classList.toggle('active', button === range));
     try { await loadDashboard(); } catch (error) { toast(error.message, true); }
+  }
+
+  const retrievalTab = event.target.closest('[data-retrieval-platform]');
+  if (retrievalTab) {
+    state.retrievalPlatform = retrievalTab.dataset.retrievalPlatform;
+    renderRetrieval(state.dashboard?.retrieval || {});
+  }
+  if (event.target.closest('#toggle-stage-sources')) {
+    state.stageSourcesExpanded = !state.stageSourcesExpanded;
+    renderRetrieval(state.dashboard?.retrieval || {});
+  }
+  if (event.target.closest('#toggle-prompt-list')) {
+    state.promptListExpanded = !state.promptListExpanded;
+    renderConfig();
+  }
+  if (event.target.closest('#toggle-reverse-results')) {
+    state.reverseResultsExpanded = !state.reverseResultsExpanded;
+    if (state.reverse) renderReverseSuggestions(state.reverse);
   }
 
   const login = event.target.closest('[data-login]');

@@ -225,22 +225,23 @@
           <div id="retrieval-queries" class="query-chips"></div>
         </article>
         <article class="panel stage-source-panel">
-          <div class="panel-head"><div><div class="section-kicker">阶段网站</div><h2>每个阶段使用的网站</h2><p>查看各网站的出现次数与平均相关度</p></div></div>
+          <div class="panel-head"><div><div class="section-kicker">阶段网站</div><h2>每个阶段使用的网站</h2><p>按 AI 平台查看各网站的出现次数与平均相关度</p></div><button class="text-button" id="toggle-stage-sources">展开列表</button></div>
+          <div id="retrieval-platform-tabs" class="platform-tabs" aria-label="按 AI 平台筛选阶段网站"></div>
           <div id="stage-sources" class="stage-sources empty-state">尚无检索轨迹</div>
         </article>
       </div>
       <article class="panel retrieval-opportunity-panel">
         <div class="panel-head"><div><div class="section-kicker">策略实验</div><h2>来源转化与曝光机会</h2><p>召回多但引用少的网站，可用于分析内容相关性与信源偏好</p></div><button class="text-button" data-go="config">配置自有域名 →</button></div>
         <div id="strategy-insights" class="strategy-insights"></div>
-        <div class="table-wrap"><table><thead><tr><th>网站</th><th>召回</th><th>选材</th><th>引用</th><th>引用转化</th><th>平均相关度</th><th>判断</th></tr></thead><tbody id="retrieval-opportunities-body"></tbody></table></div>
+        <div class="table-wrap bounded-table"><table><thead><tr><th>网站</th><th>召回</th><th>选材</th><th>引用</th><th>引用转化</th><th>平均相关度</th><th>判断</th></tr></thead><tbody id="retrieval-opportunities-body"></tbody></table></div>
       </article>
       <article class="panel variability-panel">
         <div class="panel-head"><div><div class="section-kicker">来源稳定性</div><h2>提示词变化与引用规律</h2><p>区分不同问法带来的信源变化与相同条件下的时间波动</p></div><span class="updated-at">持续采样后形成判断</span></div>
         <div id="platform-strategies" class="platform-strategies"></div>
         <div class="subtable-title"><b>不同提示词的变化幅度</b><span>两两比较引用域名，找出跨问题稳定信源</span></div>
-        <div class="table-wrap"><table><thead><tr><th>平台</th><th>提示词 A</th><th>提示词 B</th><th>来源重合</th><th>变化幅度</th><th>共同稳定信源</th></tr></thead><tbody id="prompt-comparison-body"></tbody></table></div>
+        <div class="table-wrap bounded-table"><table><thead><tr><th>平台</th><th>提示词 A</th><th>提示词 B</th><th>来源重合</th><th>变化幅度</th><th>共同稳定信源</th></tr></thead><tbody id="prompt-comparison-body"></tbody></table></div>
         <div class="subtable-title"><b>相同提示词的时间波动</b><span>保留重复问法作为随机性基线</span></div>
-        <div class="table-wrap"><table><thead><tr><th>平台 / 提示词</th><th>有效轮次</th><th>引用稳定度</th><th>来源变化率</th><th>规律判断</th><th>固定 / 轮换来源</th></tr></thead><tbody id="variability-body"></tbody></table></div>
+        <div class="table-wrap bounded-table"><table><thead><tr><th>平台 / 提示词</th><th>有效轮次</th><th>引用稳定度</th><th>来源变化率</th><th>规律判断</th><th>固定 / 轮换来源</th></tr></thead><tbody id="variability-body"></tbody></table></div>
       </article>
     </section>
 
@@ -260,13 +261,13 @@
           <div id="reverse-summary" class="reverse-summary">填写最终目的，系统会反推出可能引出该结果的用户问题。</div>
         </article>
         <article class="panel prompt-manager-card">
-          <div class="panel-head"><div><h2>提示词列表</h2><p>启用的问题会分别在所有启用平台执行</p></div><span class="step-number" id="active-prompt-count">0</span></div>
+          <div class="panel-head"><div><h2>提示词列表</h2><p>提示词是跨平台共用的实验变量，不按平台重复拆分</p></div><div class="panel-actions"><span class="step-number" id="active-prompt-count">0</span><button class="text-button" id="toggle-prompt-list">展开列表</button></div></div>
           <form id="prompt-form" class="inline-form"><input id="new-prompt" placeholder="添加新的监测问题，例如：进口家用呼吸机怎么选？"><button class="button ghost" type="submit">添加</button></form>
           <div id="prompt-list" class="prompt-list"></div>
         </article>
       </div>
       <article class="panel reverse-results-panel">
-        <div class="panel-head"><div><div class="section-kicker">反推结果</div><h2>最可能引出目标的提示词</h2><p>预测分用于排序实验优先级，最终仍以多平台真实测试结果为准</p></div><span class="updated-at" id="reverse-provider">尚未生成</span></div>
+        <div class="panel-head"><div><div class="section-kicker">反推结果</div><h2>最可能引出目标的提示词</h2><p>预测分用于排序实验优先级，最终仍以多平台真实测试结果为准</p></div><div class="panel-actions"><span class="updated-at" id="reverse-provider">尚未生成</span><button class="text-button" id="toggle-reverse-results" hidden>展开结果</button></div></div>
         <div id="reverse-suggestions" class="reverse-suggestions empty-state">暂无反推结果</div>
       </article>
     </section>

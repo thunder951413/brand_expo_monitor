@@ -628,20 +628,24 @@ class MonitorService:
                 result_params,
             ).fetchone())
             stage_sources = [dict(x) for x in conn.execute(
-                f"""SELECT stage, domain, COUNT(*) count,
+                f"""SELECT stage, platform_slug, platform_name, color, domain, COUNT(*) count,
                    ROUND(AVG(local_relevance),4) avg_relevance,
                    ROUND(AVG(provider_score),4) avg_provider_score
                    FROM (
-                     SELECT 'retrieved' stage,o.domain,o.local_relevance,o.provider_score,r.captured_at
-                       FROM source_observations o JOIN results r ON r.id=o.result_id WHERE o.retrieved=1
+                     SELECT 'retrieved' stage,p.slug platform_slug,p.name platform_name,p.color,
+                       o.domain,o.local_relevance,o.provider_score,r.captured_at
+                       FROM source_observations o JOIN results r ON r.id=o.result_id
+                       JOIN platforms p ON p.id=r.platform_id WHERE o.retrieved=1
                      UNION ALL
-                     SELECT 'selected',o.domain,o.local_relevance,o.provider_score,r.captured_at
-                       FROM source_observations o JOIN results r ON r.id=o.result_id WHERE o.selected=1
+                     SELECT 'selected',p.slug,p.name,p.color,o.domain,o.local_relevance,o.provider_score,r.captured_at
+                       FROM source_observations o JOIN results r ON r.id=o.result_id
+                       JOIN platforms p ON p.id=r.platform_id WHERE o.selected=1
                      UNION ALL
-                     SELECT 'cited',o.domain,o.local_relevance,o.provider_score,r.captured_at
-                       FROM source_observations o JOIN results r ON r.id=o.result_id WHERE o.cited=1
+                     SELECT 'cited',p.slug,p.name,p.color,o.domain,o.local_relevance,o.provider_score,r.captured_at
+                       FROM source_observations o JOIN results r ON r.id=o.result_id
+                       JOIN platforms p ON p.id=r.platform_id WHERE o.cited=1
                    ) x {"WHERE captured_at >= ?" if cutoff else ""}
-                   GROUP BY stage,domain ORDER BY stage,count DESC,domain""",
+                   GROUP BY stage,platform_slug,domain ORDER BY stage,platform_name,count DESC,domain""",
                 result_params,
             )]
             domain_funnel = [dict(x) for x in conn.execute(

@@ -301,6 +301,8 @@ h2 { margin: 0 0 4px; font-size: 15px; line-height: 1.35; letter-spacing: -.15px
 
 .prompts-panel, .recent-panel { margin-bottom: 12px; }
 .table-wrap { overflow: auto; }
+.table-wrap.bounded-table { max-height: 380px; overscroll-behavior: contain; }
+.table-wrap.bounded-table th { position: sticky; top: 0; z-index: 2; }
 table { width: 100%; border-collapse: collapse; font-size: 10px; }
 th { padding: 9px 15px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); color: #8993a2; background: #fafbfc; text-align: left; font-weight: 650; white-space: nowrap; }
 td { max-width: 340px; padding: 11px 15px; border-bottom: 1px solid #eef1f3; color: #414b5b; }
@@ -390,6 +392,7 @@ input:focus, textarea:focus, select:focus { border-color: #9899ef; box-shadow: 0
 .portfolio-card b { font-size: 9px; }
 .portfolio-card small { overflow: hidden; color: #939ca9; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
 .prompt-reverse-card, .prompt-manager-card { min-height: 340px; }
+.panel-actions { display: flex; gap: 10px; align-items: center; }
 .prompt-reverse-card form { padding: 0 20px 18px; }
 .prompt-reverse-card textarea { min-height: 96px; resize: vertical; }
 .reverse-actions { margin-top: 10px; display: flex; gap: 10px; align-items: center; }
@@ -397,9 +400,12 @@ input:focus, textarea:focus, select:focus { border-color: #9899ef; box-shadow: 0
 .reverse-summary { margin: 0 20px 18px; padding: 11px; border-radius: 8px; color: #687384; background: #f4f6f9; display: grid; gap: 4px; font-size: 8px; }
 .reverse-summary b { color: #455164; font-size: 9px; }
 .reverse-summary small { color: #9a6a28; }
-.prompt-manager-card .prompt-list { max-height: 290px; overflow: auto; }
+.prompt-manager-card .prompt-list { max-height: 290px; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; transition: max-height .2s ease; }
+.prompt-manager-card .prompt-list.expanded { max-height: min(70vh, 720px); }
+.prompt-text { display: -webkit-box; overflow: hidden; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .reverse-results-panel { margin-bottom: 12px; }
-.reverse-suggestions { padding: 0 20px 18px; display: grid; gap: 7px; }
+.reverse-suggestions { max-height: 470px; padding: 0 20px 18px; display: grid; gap: 7px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; transition: max-height .2s ease; }
+.reverse-suggestions.expanded { max-height: min(75vh, 900px); }
 .reverse-suggestion { min-height: 86px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 8px; display: grid; grid-template-columns: 24px minmax(0, 1fr) 72px auto; gap: 10px; align-items: center; }
 .suggestion-rank { width: 23px; height: 23px; border-radius: 7px; color: #6259c9; background: #eeecff; display: grid; place-items: center; font-size: 9px; font-weight: 700; }
 .suggestion-main { min-width: 0; display: grid; gap: 4px; }
@@ -476,7 +482,16 @@ input:focus, textarea:focus, select:focus { border-color: #9899ef; box-shadow: 0
 .query-chips span { padding: 4px 7px; border-radius: 5px; color: #626d7d; background: #f0f2f5; font-size: 8px; }
 .query-chips small { color: #9aa3af; font-size: 9px; }
 .stage-sources { padding: 2px 20px 16px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-.stage-sources > div > b { display: block; margin-bottom: 6px; color: #485363; font-size: 9px; }
+.platform-tabs { margin: 0 20px 12px; padding-bottom: 2px; display: flex; gap: 5px; overflow-x: auto; scrollbar-width: thin; }
+.platform-tabs button { flex: 0 0 auto; border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; color: #778291; background: #fafbfc; display: flex; gap: 5px; align-items: center; font-size: 8px; cursor: pointer; }
+.platform-tabs button:hover { border-color: #c9cbea; color: #5557bd; }
+.platform-tabs button.active { border-color: #c7c8f4; color: #4f51b8; background: #f0f0ff; box-shadow: inset 0 0 0 1px #e0e0fb; }
+.platform-tabs i { width: 6px; height: 6px; border-radius: 50%; }
+.platform-tabs span { min-width: 15px; padding: 1px 4px; border-radius: 8px; color: #8c96a3; background: #eceff3; text-align: center; font-size: 7px; }
+.stage-sources > div > b { margin-bottom: 6px; color: #485363; display: flex; justify-content: space-between; gap: 7px; font-size: 9px; }
+.stage-sources > div > b em { color: #9aa3af; font-size: 7px; font-style: normal; font-weight: 400; }
+.stage-source-list { max-height: 205px; padding-right: 4px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.stage-sources.expanded .stage-source-list { max-height: 520px; }
 .stage-sources span { padding: 5px 0; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: 1fr auto; gap: 2px 6px; }
 .stage-sources em { overflow: hidden; color: #536071; font-size: 8px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
 .stage-sources strong { font-size: 8px; }
