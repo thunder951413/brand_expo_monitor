@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 
 SCHEMA = """
@@ -133,11 +135,20 @@ PROMPTS = [
 ]
 
 
-def connect(path: str | Path) -> sqlite3.Connection:
+@contextmanager
+def connect(path: str | Path) -> Iterator[sqlite3.Connection]:
     conn = sqlite3.connect(str(path), timeout=15)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    try:
+        yield conn
+    except Exception:
+        conn.rollback()
+        raise
+    else:
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def initialize(path: str | Path, now: str) -> None:

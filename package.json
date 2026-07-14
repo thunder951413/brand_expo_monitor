@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "description": "AI 品牌曝光与引用来源监测桌面应用",
   "main": "electron/main.js",
-  "author": "thunder951413",
+  "author": {
+    "name": "thunder951413",
+    "email": "thunder951413@users.noreply.github.com"
+  },
   "license": "MIT",
   "private": true,
   "scripts": {
@@ -46,6 +49,8 @@
     },
     "linux": {
       "category": "Office",
+      "desktopName": "BrandScope.desktop",
+      "synopsis": "AI 品牌曝光与引用来源监测",
       "target": ["AppImage", "deb"]
     },
     "dmg": {
@@ -57,4 +62,3 @@
     }
   }
 }
-

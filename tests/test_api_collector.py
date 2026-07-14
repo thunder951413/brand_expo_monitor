@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -93,7 +94,8 @@ class OfficialApiCollectorTest(unittest.TestCase):
         public = self.collector.public_config()
         self.assertTrue(public["secrets"]["DOUBAO_API_KEY"])
         self.assertNotIn("db-key", json.dumps(public))
-        self.assertEqual(self.store.path.stat().st_mode & 0o777, 0o600)
+        if os.name != "nt":
+            self.assertEqual(self.store.path.stat().st_mode & 0o777, 0o600)
         self.assertTrue(all(x["configured"] for x in self.collector.statuses()))
 
     def test_tc3_signature_contains_no_secret(self):
