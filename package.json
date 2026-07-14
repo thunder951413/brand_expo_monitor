@@ -1,6 +1,6 @@
 {
   "name": "brandscope-desktop",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "AI 品牌曝光与引用来源监测桌面应用",
   "desktopName": "com.thunder951413.brandscope.desktop",
   "main": "electron/main.js",
