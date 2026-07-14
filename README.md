@@ -2,6 +2,40 @@
 
 面向豆包、千问、文心一言、DeepSeek、元宝等 AI 问答平台的品牌提及与引用来源监测 MVP。默认目标品牌为“瑞思迈ResMed”。
 
+[查看完整产品架构与数据逻辑](https://thunder951413.github.io/brand_expo_monitor/) · [下载桌面版](https://github.com/thunder951413/brand_expo_monitor/releases)
+
+## 系统架构
+
+```mermaid
+flowchart LR
+    A[品牌、别名与自有域名] --> D[任务编排]
+    B[提示词组合与 AI 反推] --> D
+    C[定时器或人工触发] --> D
+
+    D --> E{平台采集适配}
+    E --> F[官方联网 API]
+    E --> G[WebDriver 浏览器]
+    E --> H[Webhook / 人工回填 / 演示]
+
+    F --> I[回答与检索证据标准化]
+    G --> I
+    H --> I
+
+    I --> J[(SQLite)]
+    J --> K[品牌与竞品分析]
+    J --> L[来源阶段与相关度分析]
+    J --> M[提示词 × 平台 × 时间分析]
+
+    K --> N[可见性概览]
+    L --> O[信源研究]
+    M --> P[提示词实验]
+    K --> Q[AI 研究助手]
+    L --> Q
+    M --> Q
+```
+
+这条链路把“采集到什么”和“平台没有公开什么”分开保存：回答、最终引用、实际搜索词、召回、选材和引用是不同证据层级，不会因为平台未暴露中间过程就补成 0。更完整的模块职责、数据表关系、指标口径和页面决策路径见 [GitHub Pages 架构说明](https://thunder951413.github.io/brand_expo_monitor/)。
+
 ## 桌面版下载
 
 GitHub Releases 会提供 Electron 桌面安装包：
