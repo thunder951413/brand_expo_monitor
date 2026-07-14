@@ -130,6 +130,28 @@ class ServiceTest(unittest.TestCase):
         self.assertTrue(all(20 <= item["predicted_exposure"] <= 95 for item in result["suggestions"]))
         self.assertTrue(all(item["evidence"] for item in result["suggestions"]))
 
+    def test_ai_chat_injects_monitoring_context_and_default_question(self):
+        class AiStub:
+            def __init__(self):
+                self.instructions = ""
+                self.messages = []
+
+            def openai_chat(self, instructions, messages):
+                self.instructions = instructions
+                self.messages = messages
+                return {"answer": "默认评估", "model": "test-model", "response_id": "resp", "usage": {}}
+
+        prompt_id = self.service.config()["prompts"][0]["id"]
+        self.service.run(prompt_id, "demo")
+        stub = AiStub()
+        service = MonitorService(self.db_path, api_collector=stub)
+        result = service.ai_chat([], days=30)
+        self.assertEqual(result["answer"], "默认评估")
+        self.assertIn("瑞思迈ResMed", stub.instructions)
+        self.assertIn("visibility", stub.instructions)
+        self.assertIn("默认评估", stub.messages[0]["content"])
+        self.assertEqual(result["context_meta"]["results"], 5)
+
     def test_platform_strategy_compares_different_prompts(self):
         config = self.service.config()
         platform_id = config["platforms"][0]["id"]

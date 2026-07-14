@@ -243,6 +243,96 @@ class MonitorService:
         return {"goal": goal, "subject": subject, "provider": provider, "ai_error": ai_error,
                 "history_runs": total_runs, "suggestions": suggestions}
 
+    def ai_research_context(self, days: int = 30) -> dict:
+        days = min(365, max(0, int(days or 0)))
+        dashboard = self.dashboard(limit=30, days=days)
+        settings = self.settings()
+        retrieval = dashboard.get("retrieval", {})
+        recent = []
+        for result in dashboard.get("results", [])[:15]:
+            recent.append({
+                "platform": result["platform_name"], "prompt": result["prompt_text"],
+                "captured_at": result["captured_at"], "status": result["status"],
+                "collection_method": result.get("collection_method") or result.get("mode"),
+                "brand_hit": result["brand_hit"], "rank_position": result["rank_position"],
+                "citation_count": result["citation_count"], "error": result.get("error_message", ""),
+                "answer_excerpt": str(result.get("answer_text", ""))[:800],
+                "source_domains": list(dict.fromkeys(source["domain"] for source in result.get("sources", [])))[:12],
+            })
+        data = {
+            "scope": {
+                "brand": settings["brand_name"], "aliases": settings["alias_list"],
+                "owned_domains": settings["owned_domain_list"], "days": days or "all",
+                "generated_at": iso_now(),
+            },
+            "metrics": dashboard["totals"],
+            "platform_performance": dashboard["platforms"],
+            "prompt_performance": dashboard["prompts"],
+            "top_cited_domains": dashboard["sources"],
+            "retrieval": {
+                "funnel": retrieval.get("funnel", {}), "actual_queries": retrieval.get("queries", [])[:20],
+                "domain_opportunities": retrieval.get("opportunities", [])[:20],
+                "strategy_insights": retrieval.get("insights", []),
+                "same_prompt_variability": retrieval.get("variability", [])[:20],
+                "platform_strategies": retrieval.get("platform_strategies", []),
+            },
+            "recent_evidence": recent,
+        }
+        return {
+            "data": data,
+            "meta": {
+                "days": days, "results": len(dashboard.get("results", [])),
+                "platforms": len(dashboard.get("platforms", [])),
+                "prompts": len(dashboard.get("prompts", [])),
+                "sources": len(dashboard.get("sources", [])),
+                "last_capture": dashboard["totals"].get("last_capture"),
+            },
+        }
+
+    def ai_chat(self, messages: list[dict], days: int = 30) -> dict:
+        if not self.api_collector or not hasattr(self.api_collector, "openai_chat"):
+            raise RuntimeError("OpenAI 分析服务未初始化")
+        if not isinstance(messages, list):
+            raise ValueError("messages 必须是数组")
+        clean_messages = []
+        for message in messages[-20:]:
+            if not isinstance(message, dict):
+                continue
+            role = str(message.get("role", ""))
+            content = str(message.get("content", "")).strip()
+            if role in {"user", "assistant"} and content:
+                clean_messages.append({"role": role, "content": content[:12000]})
+        if not clean_messages:
+            clean_messages = [{
+                "role": "user",
+                "content": ("请对当前监测数据做默认评估：先给出曝光结论和数据可信度，再指出最重要的问题，"
+                            "解释可能原因，并给出按优先级排序、可以继续验证的提升行动。"),
+            }]
+        context = self.ai_research_context(days)
+        methodology = {
+            "product_goal": "监测目标品牌在多种 AI 平台和品牌相关问题中的曝光、位置与引用来源，并通过重复实验寻找可提升曝光的规律。",
+            "workflow": ["采集回答与来源", "检测品牌命中和近似位次", "记录召回/选材/引用阶段", "比较提示词差异和时间波动", "形成可验证的内容与信源策略"],
+            "metric_rules": {
+                "visibility": "成功回答中出现目标品牌的比例",
+                "rank": "品牌首次出现在列表中的近似位置，只在命中回答中统计",
+                "citation_coverage": "成功回答中至少包含一个外部来源的比例",
+                "local_relevance": "系统计算的词项重合度，不等同于平台内部相关度",
+                "stability": "同平台同提示词多轮引用域名集合的平均重合率；少于 3 轮只能视为样本不足",
+            },
+            "evidence_boundary": "只把 API 或网页明确暴露的过程当作观测事实；不可见的搜索、排序和选材过程不得被当作事实补全。演示数据不能代表平台实时表现。",
+        }
+        instructions = (
+            "你是 BrandScope 的 AI 品牌曝光研究助理。只根据下面的方法论和当前数据回答。"
+            "必须区分：观测事实、基于数据的推断、目前未知；不要把相关性写成因果。"
+            "样本不足时要明确说明，不要用看似精确的结论掩盖不确定性。"
+            "回答默认使用中文，先给结论，再列证据、问题和行动；行动必须可执行、可复测、可衡量。"
+            "如果用户询问当前数据之外的事实，明确说明数据中没有。\n\n"
+            f"应用方法论：\n{json.dumps(methodology, ensure_ascii=False)}\n\n"
+            f"当前监测上下文：\n{json.dumps(context['data'], ensure_ascii=False)}"
+        )
+        result = self.api_collector.openai_chat(instructions, clean_messages)
+        return {**result, "context_meta": context["meta"]}
+
     def toggle(self, table: str, item_id: int, active: bool) -> None:
         if table not in {"prompts", "platforms"}:
             raise ValueError("无效配置类型")

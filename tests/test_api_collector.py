@@ -28,6 +28,10 @@ class FakeSession:
             body = __import__("json").loads(data)
         self.calls.append((url, headers or {}, body))
         action = (headers or {}).get("X-TC-Action")
+        if "api.openai.com" in url:
+            return FakeResponse({"id": "resp_test", "model": "gpt-5.6-luna", "output": [{"type": "message", "content": [
+                {"type": "output_text", "text": "当前曝光率较高，但样本量仍需积累。"}
+            ]}], "usage": {"input_tokens": 100, "output_tokens": 20}})
         if url.endswith("/responses"):
             return FakeResponse({"output": [{"type": "message", "content": [
                 {"type": "output_text", "text": "推荐瑞思迈 ResMed。[1]",
@@ -74,6 +78,7 @@ class OfficialApiCollectorTest(unittest.TestCase):
             "DOUBAO_API_KEY": "db-key", "QWEN_API_KEY": "qw-key", "BAIDU_API_KEY": "bd-key",
             "TENCENT_SECRET_ID": "tc-id", "TENCENT_SECRET_KEY": "tc-key",
             "DEEPSEEK_API_KEY": "ds-key", "DEEPSEEK_SEARCH_PROVIDER": "baidu",
+            "OPENAI_API_KEY": "oa-key",
         })
         self.session = FakeSession()
         self.collector = OfficialApiCollector(self.store, self.session)
@@ -114,6 +119,15 @@ class OfficialApiCollectorTest(unittest.TestCase):
         result = self.collector.reverse_prompts("生成品牌曝光提示词")
         self.assertEqual(result["provider"], "DeepSeek")
         self.assertEqual(result["items"][0]["text"], "睡眠呼吸机怎么选？")
+
+    def test_openai_chat_uses_responses_api_without_cloud_storage(self):
+        result = self.collector.openai_chat("只根据监测数据回答", [{"role": "user", "content": "曝光如何？"}])
+        self.assertIn("曝光率", result["answer"])
+        url, headers, body = self.session.calls[-1]
+        self.assertEqual(url, "https://api.openai.com/v1/responses")
+        self.assertEqual(headers["Authorization"], "Bearer oa-key")
+        self.assertFalse(body["store"])
+        self.assertEqual(body["instructions"], "只根据监测数据回答")
 
 
 if __name__ == "__main__":

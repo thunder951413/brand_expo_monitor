@@ -89,6 +89,25 @@ def reverse_prompts():
         return error_response(exc)
 
 
+@app.get("/api/ai/context")
+def ai_context():
+    try:
+        days = min(365, max(0, int(request.args.get("days", "30"))))
+        return ok(service.ai_research_context(days)["meta"])
+    except Exception as exc:
+        return error_response(exc)
+
+
+@app.post("/api/ai/chat")
+def ai_chat():
+    try:
+        data = request.get_json(force=True)
+        days = min(365, max(0, int(data.get("days", 30))))
+        return ok(service.ai_chat(data.get("messages", []), days))
+    except Exception as exc:
+        return error_response(exc)
+
+
 @app.patch("/api/<kind>/<int:item_id>")
 def patch_config(kind, item_id):
     try:

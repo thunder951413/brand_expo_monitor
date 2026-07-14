@@ -16,6 +16,7 @@
     <div class="nav-label">监测</div>
     <nav>
       <button class="nav-item active" data-view="dashboard"><span class="nav-icon">⌂</span><span><b>可见性概览</b><small>判断曝光与变化</small></span></button>
+      <button class="nav-item" data-view="ai"><span class="nav-icon">◇</span><span><b>AI 交流</b><small>解读数据与讨论策略</small></span></button>
       <button class="nav-item" data-view="records"><span class="nav-icon">≡</span><span><b>回答证据</b><small>核查回答与引用</small></span></button>
     </nav>
     <div class="nav-label nav-label-secondary">研究与优化</div>
@@ -144,6 +145,40 @@
       </article>
     </section>
 
+    <section id="ai-view" class="view">
+      <div class="config-intro ai-intro">
+        <div><div class="section-kicker">AI 研究助理</div><h2>让监测数据变成可讨论的策略</h2><p>自动装载应用方法论与当前筛选范围的数据，先生成默认评估，再围绕结论继续追问。</p></div>
+        <button class="button ghost" id="refresh-ai-evaluation">重新评估当前数据</button>
+      </div>
+      <div class="ai-context-strip">
+        <div><span>分析对象</span><b id="ai-context-brand">瑞思迈ResMed</b></div>
+        <div><span>数据范围</span><b id="ai-context-range">近 30 天</b></div>
+        <div><span>已装载</span><b id="ai-context-loaded">等待读取</b></div>
+        <div><span>使用模型</span><b id="ai-context-model">未配置</b></div>
+      </div>
+      <div class="ai-workspace">
+        <aside class="ai-guide panel">
+          <div class="panel-head"><div><div class="section-kicker">建议追问</div><h2>从结论继续研究</h2><p>问题会连同当前对话和最新监测上下文一起发送</p></div></div>
+          <div class="ai-question-list">
+            <button data-ai-question="当前曝光率处于什么水平？各平台最大的差异是什么？">当前曝光表现如何？</button>
+            <button data-ai-question="当前数据最能说明哪三个问题？哪些结论因为样本不足还不能确定？">这些数据说明什么问题？</button>
+            <button data-ai-question="如果目标是继续提升品牌曝光，接下来四周应该按什么优先级行动和复测？">如何继续提升曝光？</button>
+            <button data-ai-question="哪些提示词意图最值得扩展？请给出可直接加入实验的自然问题。">下一批提示词测什么？</button>
+            <button data-ai-question="哪些网站和信源最值得优先布局？请区分自有内容、第三方媒体和平台偏好。">优先布局哪些信源？</button>
+          </div>
+          <div class="ai-boundary"><b>分析边界</b><p>AI 会收到汇总指标、平台/提示词表现、信源轨迹和近期回答节选。密钥保存在本机，但以上监测数据会发送给 OpenAI 进行分析。</p><button class="text-button" data-go="config">管理 OpenAI 配置 →</button></div>
+        </aside>
+        <article class="ai-chat panel">
+          <div class="ai-chat-head"><div><span class="ai-orb">AI</span><div><b>BrandScope 研究助理</b><small id="ai-chat-status">等待默认评估</small></div></div><button class="text-button" id="clear-ai-chat">清空对话</button></div>
+          <div id="ai-messages" class="ai-messages"><div class="ai-empty"><span>◇</span><b>准备分析当前监测数据</b><p>配置 OpenAI API Key 后，进入本页会自动生成曝光评估。</p></div></div>
+          <form id="ai-chat-form" class="ai-composer">
+            <textarea id="ai-chat-input" rows="2" maxlength="4000" placeholder="继续问：为什么豆包引用这些网站？下一轮应该验证什么？"></textarea>
+            <button class="button primary" type="submit">发送</button>
+          </form>
+        </article>
+      </div>
+    </section>
+
     <section id="records-view" class="view">
       <div class="module-brief">
         <div><span>页面目的</span><b>把汇总指标追溯到每一条原始回答</b><p>用于确认品牌是否真的出现、引用网址是否正确，以及失败来自登录、API 还是页面变化。</p></div>
@@ -238,6 +273,14 @@
       <article class="panel readiness-panel">
         <div class="panel-head"><div><div class="section-kicker">启动检查</div><h2>监测链路是否准备完成</h2><p>品牌、问题、平台、采集通道和定时任务缺一不可</p></div><strong id="readiness-score">0%</strong></div>
         <div id="readiness-steps" class="readiness-steps"></div>
+      </article>
+      <article class="panel config-card full openai-config-card">
+        <div class="panel-head"><div><div class="section-kicker">AI 交流</div><h2>OpenAI 研究助理</h2><p>使用 Responses API 分析当前监测上下文并支持连续追问</p></div><div class="login-actions"><span id="openai-config-status" class="api-summary missing">尚未配置</span><button class="button primary" id="save-openai-config">保存 OpenAI 配置</button></div></div>
+        <div class="openai-config-grid">
+          <label>OpenAI API Key<input id="api-openai-key" type="password" autocomplete="new-password" placeholder="sk-..."></label>
+          <label>分析模型<input id="api-openai-model" placeholder="gpt-5.6-luna"></label>
+          <div class="openai-privacy"><b>数据说明</b><span>API Key 只保存在本机配置文件中，不返回页面明文。发起分析时，当前监测汇总、近期回答节选和对话记录会发送给 OpenAI。</span></div>
+        </div>
       </article>
       <div class="config-grid">
         <article class="panel config-card">

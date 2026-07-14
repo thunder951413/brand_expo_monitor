@@ -1,4 +1,5 @@
-const state = { config: null, browsers: [], apis: [], apiConfig: null, dashboard: null, reverse: null, view: 'dashboard', days: 30 };
+const state = { config: null, browsers: [], apis: [], apiConfig: null, dashboard: null, reverse: null, view: 'dashboard', days: 30,
+  ai: { messages: [], initialized: false, loading: false, context: null } };
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const escapeHTML = (value = '') => String(value).replace(/[&<>'"]/g, char => ({
@@ -44,6 +45,7 @@ function switchView(view) {
   $$('.workflow-step').forEach(element => element.classList.toggle('active', element.dataset.go === view));
   const names = {
     dashboard: ['AI 品牌可见性', '概览', '判断品牌是否被 AI 看见，以及最值得优先处理的问题。'],
+    ai: ['AI 数据交流', '研究助理', '基于当前监测数据评估曝光表现、解释问题并讨论下一步策略。'],
     records: ['回答与引用证据', '证据记录', '从汇总指标下钻到每次回答、来源网址和采集失败原因。'],
     relevance: ['网站与信源研究', '信源分析', '解释网站如何从搜索召回进入选材，并最终成为回答引用。'],
     prompts: ['提示词实验', '问题策略', '设计覆盖真实用户意图的问题，并用跨平台实验验证曝光规律。'],
@@ -53,6 +55,7 @@ function switchView(view) {
   $('#breadcrumb-current').textContent = names[view][1];
   $('#page-purpose').textContent = names[view][2];
   window.scrollTo({ top: 0, behavior: 'smooth' });
+  if (view === 'ai') ensureAiEvaluation().catch(error => showAiSetup(error.message));
 }
 
 function promptIntent(text = '') {
@@ -73,6 +76,7 @@ async function loadConfig() {
   state.apiConfig = response.api_config || { models: {}, secrets: {}, deepseek_search_provider: 'baidu' };
   const { settings, prompts, platforms } = state.config;
   $('#brand-pill').textContent = settings.brand_name;
+  $('#ai-context-brand').textContent = settings.brand_name;
   $('#scope-summary').textContent = `${platforms.filter(item => item.active).length} 个平台 · ${prompts.filter(item => item.active).length} 个提示词`;
   $('#brand-name').value = settings.brand_name;
   $('#aliases').value = settings.aliases;
@@ -178,13 +182,14 @@ function renderApiConfig() {
   const modelValues = {
     'api-doubao-model': models.DOUBAO_MODEL, 'api-qwen-model': models.QWEN_MODEL,
     'api-baidu-model': models.BAIDU_MODEL, 'api-tencent-model': models.TENCENT_HUNYUAN_MODEL,
-    'api-deepseek-model': models.DEEPSEEK_MODEL
+    'api-deepseek-model': models.DEEPSEEK_MODEL, 'api-openai-model': models.OPENAI_MODEL
   };
   Object.entries(modelValues).forEach(([id, value]) => { const element = $(`#${id}`); if (element) element.value = value || ''; });
   const provider = $('#api-deepseek-provider'); if (provider) provider.value = config.deepseek_search_provider || 'baidu';
   const secretFields = {
     'api-doubao-key': 'DOUBAO_API_KEY', 'api-qwen-key': 'QWEN_API_KEY', 'api-baidu-key': 'BAIDU_API_KEY',
-    'api-tencent-id': 'TENCENT_SECRET_ID', 'api-tencent-secret': 'TENCENT_SECRET_KEY', 'api-deepseek-key': 'DEEPSEEK_API_KEY'
+    'api-tencent-id': 'TENCENT_SECRET_ID', 'api-tencent-secret': 'TENCENT_SECRET_KEY', 'api-deepseek-key': 'DEEPSEEK_API_KEY',
+    'api-openai-key': 'OPENAI_API_KEY'
   };
   Object.entries(secretFields).forEach(([id, key]) => {
     const element = $(`#${id}`); if (!element) return;
@@ -192,6 +197,81 @@ function renderApiConfig() {
   });
   const statusList = $('#api-status-list');
   if (statusList) statusList.innerHTML = state.apis.map(item => `<span class="api-summary ${item.configured ? 'ready' : 'missing'}"><b>${escapeHTML(item.name)}</b>${escapeHTML(item.configured ? item.model : item.message)}</span>`).join('');
+  const openaiReady = Boolean(config.secrets?.OPENAI_API_KEY);
+  $('#openai-config-status').className = `api-summary ${openaiReady ? 'ready' : 'missing'}`;
+  $('#openai-config-status').textContent = openaiReady ? `已配置 · ${models.OPENAI_MODEL}` : '尚未配置';
+  $('#ai-context-model').textContent = openaiReady ? models.OPENAI_MODEL : '未配置';
+}
+
+function aiRangeLabel() { return state.days ? `近 ${state.days} 天` : '全部历史'; }
+
+function formatAiText(content = '') {
+  const lines = escapeHTML(content).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').split('\n');
+  return lines.map(line => {
+    const heading = line.match(/^#{1,3}\s+(.+)/);
+    if (heading) return `<h3>${heading[1]}</h3>`;
+    const bullet = line.match(/^[-*]\s+(.+)/);
+    if (bullet) return `<p class="ai-bullet">${bullet[1]}</p>`;
+    const ordered = line.match(/^(\d+)[.、]\s*(.+)/);
+    if (ordered) return `<p class="ai-bullet"><b>${ordered[1]}.</b> ${ordered[2]}</p>`;
+    return line ? `<p>${line}</p>` : '<br>';
+  }).join('');
+}
+
+function renderAiMessages() {
+  const element = $('#ai-messages');
+  const visible = state.ai.messages.filter(message => !message.hidden);
+  if (!visible.length) return;
+  element.innerHTML = visible.map(message => `<div class="ai-message ${message.role}">
+    <span>${message.role === 'assistant' ? 'AI' : '你'}</span><div>${formatAiText(message.content)}</div>
+  </div>`).join('') + (state.ai.loading ? '<div class="ai-message assistant thinking"><span>AI</span><div><i></i><i></i><i></i> 正在结合最新监测数据分析…</div></div>' : '');
+  element.scrollTop = element.scrollHeight;
+}
+
+function showAiSetup(message = '请先配置 OpenAI API Key') {
+  state.ai.loading = false;
+  $('#ai-chat-status').textContent = '需要完成 OpenAI 配置';
+  $('#ai-messages').innerHTML = `<div class="ai-empty"><span>◇</span><b>${escapeHTML(message)}</b><p>完成配置后返回本页，系统会自动生成当前曝光评估。</p><button class="button primary" data-go="config">前往采集配置</button></div>`;
+}
+
+async function loadAiContext() {
+  const response = await api(`/api/ai/context?days=${state.days}`);
+  state.ai.context = response.data;
+  $('#ai-context-range').textContent = aiRangeLabel();
+  $('#ai-context-loaded').textContent = `${response.data.results} 条回答 · ${response.data.sources} 个信源`;
+  return response.data;
+}
+
+async function sendAiMessage(content, isDefault = false) {
+  if (state.ai.loading) return;
+  if (!state.apiConfig?.secrets?.OPENAI_API_KEY) return showAiSetup();
+  if (content) state.ai.messages.push({ role: 'user', content, hidden: isDefault });
+  state.ai.loading = true;
+  $('#ai-chat-status').textContent = isDefault ? '正在生成默认评估' : '正在分析';
+  renderAiMessages();
+  try {
+    await loadAiContext();
+    const response = await api('/api/ai/chat', { method: 'POST', body: JSON.stringify({ messages: state.ai.messages, days: state.days }) });
+    state.ai.messages.push({ role: 'assistant', content: response.data.answer });
+    state.ai.initialized = true;
+    $('#ai-context-model').textContent = response.data.model;
+    $('#ai-chat-status').textContent = `基于 ${response.data.context_meta.results} 条回答 · ${response.data.model}`;
+  } finally {
+    state.ai.loading = false;
+    renderAiMessages();
+  }
+}
+
+async function waitForAiIdle() {
+  while (state.ai.loading) await new Promise(resolve => setTimeout(resolve, 100));
+}
+
+async function ensureAiEvaluation(force = false) {
+  await loadAiContext();
+  if (!state.apiConfig?.secrets?.OPENAI_API_KEY) return showAiSetup();
+  if (state.ai.initialized && !force) return renderAiMessages();
+  if (force) state.ai.messages = [];
+  return sendAiMessage('请对当前监测数据做默认评估：先给出曝光结论和数据可信度，再指出最重要的问题，解释可能原因，并给出按优先级排序、可以继续验证的提升行动。', true);
 }
 
 async function loadDashboard() {
@@ -541,6 +621,23 @@ document.addEventListener('click', async event => {
     const all = $('#run-form input[name="all"]');
     if (all) all.checked = true;
   }
+  const aiQuestion = event.target.closest('[data-ai-question]');
+  if (aiQuestion) {
+    switchView('ai');
+    if (!state.apiConfig?.secrets?.OPENAI_API_KEY) return showAiSetup();
+    await waitForAiIdle();
+    if (!state.ai.initialized) await ensureAiEvaluation();
+    await waitForAiIdle();
+    await sendAiMessage(aiQuestion.dataset.aiQuestion);
+  }
+  if (event.target.closest('#refresh-ai-evaluation')) {
+    try { await ensureAiEvaluation(true); } catch (error) { showAiSetup(error.message); toast(error.message, true); }
+  }
+  if (event.target.closest('#clear-ai-chat')) {
+    state.ai.messages = []; state.ai.initialized = false;
+    $('#ai-messages').innerHTML = '<div class="ai-empty"><span>◇</span><b>对话已清空</b><p>点击“重新评估当前数据”开始新的分析。</p></div>';
+    $('#ai-chat-status').textContent = '等待默认评估';
+  }
 
   const range = event.target.closest('[data-days]');
   if (range) {
@@ -616,6 +713,12 @@ document.addEventListener('submit', async event => {
       button.disabled = false; button.textContent = '重新反推';
       toast(`已由${response.data.provider}生成提示词实验建议`);
     }
+    if (event.target.id === 'ai-chat-form') {
+      const input = $('#ai-chat-input'); const content = input.value.trim();
+      if (!content) return;
+      input.value = '';
+      await sendAiMessage(content);
+    }
     if (event.target.id === 'run-form') {
       const form = new FormData(event.target); const button = event.target.querySelector('button');
       button.disabled = true; button.textContent = '采集中…';
@@ -670,9 +773,18 @@ $('#save-api-config').addEventListener('click', async () => {
   } catch (error) { toast(error.message, true); }
 });
 
+$('#save-openai-config').addEventListener('click', async () => {
+  const values = { OPENAI_API_KEY: $('#api-openai-key').value, OPENAI_MODEL: $('#api-openai-model').value };
+  try {
+    await api('/api/api-config', { method: 'PUT', body: JSON.stringify({ values }) });
+    state.ai.initialized = false; state.ai.messages = [];
+    await loadConfig(); toast('OpenAI 配置已安全保存到本机');
+  } catch (error) { toast(error.message, true); }
+});
+
 $('#clear-api-config').addEventListener('click', async () => {
   if (!confirm('确认清除本机保存的全部 API 密钥？环境变量不会被修改。')) return;
-  const clear = ['DOUBAO_API_KEY', 'QWEN_API_KEY', 'BAIDU_API_KEY', 'TENCENT_SECRET_ID', 'TENCENT_SECRET_KEY', 'DEEPSEEK_API_KEY'];
+  const clear = ['OPENAI_API_KEY', 'DOUBAO_API_KEY', 'QWEN_API_KEY', 'BAIDU_API_KEY', 'TENCENT_SECRET_ID', 'TENCENT_SECRET_KEY', 'DEEPSEEK_API_KEY'];
   try {
     await api('/api/api-config', { method: 'PUT', body: JSON.stringify({ values: {}, clear }) });
     await loadConfig(); toast('本地 API 密钥已清除');

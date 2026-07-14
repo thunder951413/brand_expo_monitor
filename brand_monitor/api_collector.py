@@ -14,6 +14,8 @@ from .collector import Collection, normalize_sources, relevance_score
 
 
 DEFAULTS = {
+    "OPENAI_MODEL": "gpt-5.6-luna",
+    "OPENAI_BASE_URL": "https://api.openai.com/v1",
     "DOUBAO_MODEL": "doubao-seed-1-6-250615",
     "DOUBAO_BASE_URL": "https://ark.cn-beijing.volces.com/api/v3",
     "QWEN_MODEL": "qwen-plus",
@@ -27,6 +29,7 @@ DEFAULTS = {
 }
 
 ALLOWED_KEYS = {
+    "OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_BASE_URL",
     "DOUBAO_API_KEY", "DOUBAO_MODEL", "DOUBAO_BASE_URL",
     "QWEN_API_KEY", "QWEN_MODEL", "QWEN_BASE_URL",
     "BAIDU_API_KEY", "BAIDU_MODEL", "BAIDU_BASE_URL",
@@ -36,6 +39,7 @@ ALLOWED_KEYS = {
 }
 
 SECRET_KEYS = {
+    "OPENAI_API_KEY",
     "DOUBAO_API_KEY", "QWEN_API_KEY", "BAIDU_API_KEY",
     "TENCENT_SECRET_ID", "TENCENT_SECRET_KEY", "DEEPSEEK_API_KEY",
 }
@@ -222,6 +226,34 @@ class OfficialApiCollector:
             "models": {key: values.get(key, "") for key in DEFAULTS if "MODEL" in key},
             "deepseek_search_provider": values.get("DEEPSEEK_SEARCH_PROVIDER", "baidu"),
             "secrets": {key: bool(values.get(key)) for key in SECRET_KEYS},
+        }
+
+    def openai_chat(self, instructions: str, messages: list[dict]) -> dict:
+        values = self.config.values()
+        if not values.get("OPENAI_API_KEY"):
+            raise RuntimeError("请先在采集配置中设置 OpenAI API Key")
+        safe_messages = []
+        for message in messages[-20:]:
+            role = str(message.get("role", ""))
+            content = str(message.get("content", "")).strip()
+            if role in {"user", "assistant"} and content:
+                safe_messages.append({"role": role, "content": content[:12000]})
+        data = self._post(
+            f"{values['OPENAI_BASE_URL'].rstrip('/')}/responses",
+            headers={"Authorization": f"Bearer {values['OPENAI_API_KEY']}", "Content-Type": "application/json"},
+            body={
+                "model": values["OPENAI_MODEL"], "instructions": instructions,
+                "input": safe_messages, "store": False, "max_output_tokens": 2200,
+            }, timeout=180,
+        )
+        texts = [item.get("text", "") for item in _walk(data.get("output", []))
+                 if item.get("type") == "output_text" and isinstance(item.get("text"), str)]
+        answer = "\n".join(texts).strip()
+        if not answer:
+            raise RuntimeError("OpenAI API 未返回文本内容")
+        return {
+            "answer": answer, "model": str(data.get("model") or values["OPENAI_MODEL"]),
+            "response_id": str(data.get("id", "")), "usage": data.get("usage") or {},
         }
 
     def collect(self, platform: dict, prompt: str) -> Collection:
