@@ -1,0 +1,14 @@
+{
+  "DOUBAO_API_KEY": "",
+  "DOUBAO_MODEL": "doubao-seed-1-6-250615",
+  "QWEN_API_KEY": "",
+  "QWEN_MODEL": "qwen-plus",
+  "BAIDU_API_KEY": "",
+  "BAIDU_MODEL": "ernie-3.5-8k",
+  "TENCENT_SECRET_ID": "",
+  "TENCENT_SECRET_KEY": "",
+  "TENCENT_HUNYUAN_MODEL": "hunyuan-turbos-latest",
+  "DEEPSEEK_API_KEY": "",
+  "DEEPSEEK_MODEL": "deepseek-v4-flash",
+  "DEEPSEEK_SEARCH_PROVIDER": "baidu"
+}

@@ -1,0 +1,22 @@
+.DS_Store
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Runtime data, API credentials and persistent browser sessions
+instance/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Logs and editor files
+*.log
+.idea/
+.vscode/
+
