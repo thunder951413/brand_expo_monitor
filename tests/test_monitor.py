@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from brand_monitor.collector import Collection, analyze_answer, brand_terms, normalize_sources
+from brand_monitor.collector import Collection, analyze_answer, brand_terms, extract_brand_mentions, normalize_sources
 from brand_monitor.db import initialize
 from brand_monitor.service import MonitorService, iso_now, source_variability
 from brand_monitor.webdriver_collector import clean_answer_text, extract_body_delta
@@ -30,6 +30,14 @@ class CollectorTest(unittest.TestCase):
         self.assertEqual(sources[0]["domain"], "resmed.com.cn")
         redirected = normalize_sources(["https://example.ai/redirect?url=https%3A%2F%2Fnews.example.com%2Fa"])
         self.assertEqual(redirected[0]["url"], "https://news.example.com/a")
+
+    def test_rule_brand_extraction_records_other_brands_and_priority(self):
+        items = extract_brand_mentions(
+            "1. 瑞思迈 ResMed：首选\n2. 飞利浦伟康\n3. 费雪派克", "瑞思迈ResMed", "瑞思迈,ResMed"
+        )
+        self.assertEqual([item["brand_name"] for item in items], ["瑞思迈ResMed", "飞利浦伟康", "费雪派克"])
+        self.assertEqual([item["priority_rank"] for item in items], [1, 2, 3])
+        self.assertTrue(items[0]["is_target"])
 
     def test_webdriver_body_delta_fallback(self):
         before = "豆包\n新对话\n联网搜索\n发送"
@@ -64,6 +72,9 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual(dashboard["totals"]["citation_rate"], 80.0)
         self.assertEqual(dashboard["totals"]["unique_sources"], 4)
         self.assertEqual(len(dashboard["prompts"]), 1)
+        self.assertGreaterEqual(len(dashboard["brand_landscape"]["overall"]), 4)
+        self.assertTrue(dashboard["brand_landscape"]["target"]["is_target"])
+        self.assertTrue(all("brand_mentions" in result for result in dashboard["results"]))
         self.assertEqual(self.service.dashboard(days=30)["totals"]["total"], 5)
 
     def test_manual_capture(self):

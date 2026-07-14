@@ -29,6 +29,13 @@ class FakeSession:
         self.calls.append((url, headers or {}, body))
         action = (headers or {}).get("X-TC-Action")
         if "api.openai.com" in url:
+            if "品牌竞争曝光数据抽取器" in str((body or {}).get("instructions", "")):
+                return FakeResponse({"id": "resp_brands", "model": "gpt-5.6-luna", "output": [{"type": "message", "content": [
+                    {"type": "output_text", "text": json_module({"brands": [
+                        {"name": "瑞思迈 ResMed", "mention_count": 1, "priority_rank": 1, "sentiment": "positive", "recommended": True, "evidence": "首选瑞思迈", "confidence": .96},
+                        {"name": "飞利浦伟康", "mention_count": 1, "priority_rank": 2, "sentiment": "neutral", "recommended": False, "evidence": "其次飞利浦伟康", "confidence": .91}
+                    ]})}
+                ]}]})
             return FakeResponse({"id": "resp_test", "model": "gpt-5.6-luna", "output": [{"type": "message", "content": [
                 {"type": "output_text", "text": "当前曝光率较高，但样本量仍需积累。"}
             ]}], "usage": {"input_tokens": 100, "output_tokens": 20}})
@@ -128,6 +135,13 @@ class OfficialApiCollectorTest(unittest.TestCase):
         self.assertEqual(headers["Authorization"], "Bearer oa-key")
         self.assertFalse(body["store"])
         self.assertEqual(body["instructions"], "只根据监测数据回答")
+
+    def test_openai_extracts_competing_brands_and_priority(self):
+        result = self.collector.extract_brand_mentions_ai(
+            "家用呼吸机品牌推荐", "1. 瑞思迈 ResMed\n2. 飞利浦伟康", "瑞思迈ResMed", ["瑞思迈", "ResMed"]
+        )
+        self.assertEqual([item["name"] for item in result["items"]], ["瑞思迈 ResMed", "飞利浦伟康"])
+        self.assertEqual(result["items"][0]["priority_rank"], 1)
 
 
 if __name__ == "__main__":

@@ -102,6 +102,12 @@
         </article>
       </div>
 
+      <article class="panel brand-landscape-panel">
+        <div class="panel-head"><div><div class="section-kicker">竞争曝光</div><h2>目标品牌与其他品牌的提及和优先级</h2><p>同时比较回答覆盖、平均优先位次、首位率和推荐倾向</p></div><div class="landscape-controls"><span id="brand-analysis-method">规则 / AI 混合识别</span><select id="brand-prompt-filter"><option value="">全部提示词</option></select></div></div>
+        <div id="brand-landscape-summary" class="landscape-summary"></div>
+        <div class="table-wrap"><table><thead><tr><th>竞争位次</th><th>品牌</th><th>回答覆盖</th><th>平均优先位次</th><th>首位率</th><th>推荐率</th><th>综合曝光</th><th>识别依据</th></tr></thead><tbody id="brand-landscape-body"></tbody></table></div>
+      </article>
+
       <div class="overview-grid">
         <article class="panel trend-panel">
           <div class="panel-head">
@@ -281,6 +287,7 @@
           <label>分析模型<input id="api-openai-model" placeholder="gpt-5.6-luna"></label>
           <div class="openai-privacy"><b>数据说明</b><span>API Key 只保存在本机配置文件中，不返回页面明文。发起分析时，当前监测汇总、近期回答节选和对话记录会发送给 OpenAI。</span></div>
         </div>
+        <div class="ai-analysis-option"><div><b>每条回答分析其他品牌</b><span>采集完成后自动识别其他品牌、推荐语境和优先顺序；OpenAI 不可用时回退到编号列表规则。</span></div><label class="switch"><input id="ai-brand-analysis-enabled" type="checkbox" checked><span></span></label></div>
       </article>
       <div class="config-grid">
         <article class="panel config-card">

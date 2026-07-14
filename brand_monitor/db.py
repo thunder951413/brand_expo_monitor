@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS settings (
     schedule_enabled INTEGER NOT NULL DEFAULT 0,
     schedule_minutes INTEGER NOT NULL DEFAULT 1440,
     schedule_mode TEXT NOT NULL DEFAULT 'demo',
+    ai_brand_analysis_enabled INTEGER NOT NULL DEFAULT 1,
     updated_at TEXT NOT NULL
 );
 
@@ -110,12 +111,30 @@ CREATE TABLE IF NOT EXISTS source_observations (
     FOREIGN KEY(result_id) REFERENCES results(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS brand_mentions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    result_id INTEGER NOT NULL,
+    brand_name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL,
+    mention_count INTEGER NOT NULL DEFAULT 1,
+    priority_rank INTEGER,
+    sentiment TEXT NOT NULL DEFAULT 'neutral',
+    recommended INTEGER NOT NULL DEFAULT 0,
+    is_target INTEGER NOT NULL DEFAULT 0,
+    extraction_method TEXT NOT NULL DEFAULT 'rule',
+    confidence REAL NOT NULL DEFAULT 0,
+    evidence TEXT NOT NULL DEFAULT '',
+    FOREIGN KEY(result_id) REFERENCES results(id) ON DELETE CASCADE
+);
+
 CREATE INDEX IF NOT EXISTS idx_results_run ON results(run_id);
 CREATE INDEX IF NOT EXISTS idx_results_platform ON results(platform_id);
 CREATE INDEX IF NOT EXISTS idx_sources_result ON sources(result_id);
 CREATE INDEX IF NOT EXISTS idx_search_queries_result ON search_queries(result_id);
 CREATE INDEX IF NOT EXISTS idx_observations_result ON source_observations(result_id);
 CREATE INDEX IF NOT EXISTS idx_observations_domain ON source_observations(domain);
+CREATE INDEX IF NOT EXISTS idx_brand_mentions_result ON brand_mentions(result_id);
+CREATE INDEX IF NOT EXISTS idx_brand_mentions_name ON brand_mentions(normalized_name);
 """
 
 
@@ -161,6 +180,8 @@ def initialize(path: str | Path, now: str) -> None:
         settings_columns = {row[1] for row in conn.execute("PRAGMA table_info(settings)")}
         if "owned_domains" not in settings_columns:
             conn.execute("ALTER TABLE settings ADD COLUMN owned_domains TEXT NOT NULL DEFAULT ''")
+        if "ai_brand_analysis_enabled" not in settings_columns:
+            conn.execute("ALTER TABLE settings ADD COLUMN ai_brand_analysis_enabled INTEGER NOT NULL DEFAULT 1")
         conn.execute(
             """INSERT OR IGNORE INTO settings
                (id, brand_name, aliases, webhook_url, schedule_enabled,

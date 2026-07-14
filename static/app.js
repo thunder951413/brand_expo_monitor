@@ -1,5 +1,5 @@
 const state = { config: null, browsers: [], apis: [], apiConfig: null, dashboard: null, reverse: null, view: 'dashboard', days: 30,
-  ai: { messages: [], initialized: false, loading: false, context: null } };
+  ai: { messages: [], initialized: false, loading: false, context: null }, brandPrompt: '' };
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const escapeHTML = (value = '') => String(value).replace(/[&<>'"]/g, char => ({
@@ -85,6 +85,7 @@ async function loadConfig() {
   $('#schedule-enabled').checked = settings.schedule_enabled;
   $('#schedule-minutes').value = settings.schedule_minutes;
   $('#schedule-mode').value = settings.schedule_mode;
+  $('#ai-brand-analysis-enabled').checked = settings.ai_brand_analysis_enabled !== false;
   $('#next-run').textContent = response.scheduler.next_run ? `下次 ${formatTime(response.scheduler.next_run)}` : '定时任务未启用';
   const reverseGoal = $('#reverse-goal');
   if (reverseGoal && !reverseGoal.value) reverseGoal.value = `让目标用户在品牌推荐、排行和产品对比中看到${settings.brand_name}`;
@@ -302,9 +303,32 @@ function renderDashboard() {
   renderPlatformChart(dashboard.platforms);
   renderSourceChart(dashboard.sources);
   renderPromptPerformance(dashboard.prompts);
+  renderBrandLandscape(dashboard.brand_landscape || {});
   renderRetrieval(dashboard.retrieval || {});
   renderTables();
   renderPromptPortfolio();
+}
+
+function renderBrandLandscape(landscape) {
+  const overall = landscape.overall || [];
+  const promptGroups = landscape.by_prompt || [];
+  const select = $('#brand-prompt-filter');
+  select.innerHTML = '<option value="">全部提示词</option>' + promptGroups.map(group => `<option value="${escapeHTML(group.prompt_text)}">${escapeHTML(group.prompt_text)}</option>`).join('');
+  select.value = promptGroups.some(group => group.prompt_text === state.brandPrompt) ? state.brandPrompt : '';
+  state.brandPrompt = select.value;
+  const group = state.brandPrompt ? promptGroups.find(item => item.prompt_text === state.brandPrompt) : null;
+  const brands = group ? group.brands : overall;
+  const target = brands.find(item => item.is_target);
+  const leadingOther = brands.find(item => !item.is_target);
+  $('#brand-analysis-method').textContent = landscape.method_note || '规则 / AI 混合识别';
+  $('#brand-landscape-summary').innerHTML = `<div class="landscape-hero target"><span>目标品牌</span><b>${escapeHTML(target?.brand_name || state.config.settings.brand_name)}</b><strong>${target ? `${target.answer_coverage}%` : '暂无数据'}</strong><small>${target ? `竞争位次 #${target.competitive_rank} · 平均优先 #${target.avg_priority || '—'}` : '完成新一轮采集后生成'}</small></div>
+    <div class="landscape-hero competitor"><span>领先其他品牌</span><b>${escapeHTML(leadingOther?.brand_name || '尚未识别')}</b><strong>${leadingOther ? `${leadingOther.answer_coverage}%` : '—'}</strong><small>${leadingOther ? `竞争位次 #${leadingOther.competitive_rank} · 综合曝光 ${leadingOther.exposure_score}` : '回答中暂无其他品牌数据'}</small></div>
+    <div class="landscape-gap"><span>目标与领先品牌差距</span><b>${target && leadingOther ? `${Math.round((target.exposure_score - leadingOther.exposure_score) * 10) / 10}` : '—'}</b><small>综合曝光分差；正值代表目标品牌领先</small></div>`;
+  $('#brand-landscape-body').innerHTML = brands.map(item => `<tr class="${item.is_target ? 'target-brand-row' : ''}">
+    <td><b>#${item.competitive_rank}</b></td><td><span class="brand-name-cell">${escapeHTML(item.brand_name)}${item.is_target ? '<em>目标</em>' : ''}</span></td>
+    <td><div class="metric-cell"><b>${item.answer_coverage}%</b><i><span style="width:${item.answer_coverage}%"></span></i><small>${item.result_mentions} 条回答</small></div></td>
+    <td>${item.avg_priority ? `#${item.avg_priority}` : '—'}</td><td>${item.top1_rate}%</td><td>${item.recommendation_rate}%</td>
+    <td><strong class="exposure-score">${item.exposure_score}</strong></td><td><span class="extraction-pill ${item.ai_coverage ? 'ai' : 'rule'}">${item.ai_coverage ? `AI ${item.ai_coverage}%` : '规则'}</span></td></tr>`).join('') || '<tr><td colspan="8">暂无品牌竞争数据；运行新一轮监测后开始统计。</td></tr>';
 }
 
 function renderDecisionSummary(dashboard) {
@@ -566,6 +590,8 @@ function showResult(id) {
     <span class="hit ${result.brand_hit ? 'yes' : 'no'}">${result.brand_hit ? `已提及 · 位次 #${result.rank_position || '—'}` : '未提及目标品牌'}</span>
     <span class="record-status ${result.status}">${statusNames[result.status] || result.status}</span>
     <div class="answer-box">${escapeHTML(result.answer_text || result.error_message || '无回答')}</div>
+    <h2>回答中的品牌优先级</h2>
+    <div class="answer-brands">${(result.brand_mentions || []).map(item => `<span class="${item.is_target ? 'target' : ''}"><b>${escapeHTML(item.brand_name)}</b><em>${item.priority_rank ? `#${item.priority_rank}` : '未排序'}</em><small>${item.extraction_method === 'rule' ? '规则' : 'AI 语义'} · ${Math.round((item.confidence || 0) * 100)}%</small></span>`).join('') || '<span class="sub">本次回答尚无品牌竞争分析</span>'}</div>
     <h2>引用来源（${result.sources.length}）</h2>
     <div class="source-list">${result.sources.map(source => `<a class="source-link" href="${escapeHTML(source.url)}" target="_blank" rel="noopener">${escapeHTML(source.title || source.domain)} · ${escapeHTML(source.url)}</a>`).join('') || '<span class="sub">本次回答未识别到外部来源网址</span>'}</div>
     <h2 class="trace-title">检索过程</h2>
@@ -695,6 +721,10 @@ document.addEventListener('change', async event => {
     } catch (error) { toast(error.message, true); }
   }
   if (event.target.matches('#platform-filter,#hit-filter,#status-filter')) renderTables();
+  if (event.target.id === 'brand-prompt-filter') {
+    state.brandPrompt = event.target.value;
+    renderBrandLandscape(state.dashboard.brand_landscape || {});
+  }
 });
 $('#record-search').addEventListener('input', renderTables);
 
@@ -751,7 +781,7 @@ $('#save-config').addEventListener('click', async () => {
       brand_name: $('#brand-name').value, aliases: $('#aliases').value, webhook_url: $('#webhook-url').value,
       owned_domains: $('#owned-domains').value,
       schedule_enabled: $('#schedule-enabled').checked, schedule_minutes: Number($('#schedule-minutes').value),
-      schedule_mode: $('#schedule-mode').value
+      schedule_mode: $('#schedule-mode').value, ai_brand_analysis_enabled: $('#ai-brand-analysis-enabled').checked
     }) });
     await loadConfig(); toast('配置已保存');
   } catch (error) { toast(error.message, true); }

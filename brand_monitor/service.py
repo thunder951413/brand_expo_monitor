@@ -10,7 +10,8 @@ from datetime import datetime, timedelta
 from itertools import combinations
 from statistics import pstdev
 
-from .collector import analyze_answer, brand_terms, demo_collect, normalize_sources, relevance_score, webhook_collect
+from .collector import (analyze_answer, brand_terms, demo_collect, extract_brand_mentions,
+                        normalize_brand_key, normalize_sources, relevance_score, webhook_collect)
 from .db import connect
 
 
@@ -86,6 +87,7 @@ class MonitorService:
         with connect(self.db_path) as conn:
             row = row_dict(conn.execute("SELECT * FROM settings WHERE id = 1").fetchone())
         row["schedule_enabled"] = bool(row["schedule_enabled"])
+        row["ai_brand_analysis_enabled"] = bool(row.get("ai_brand_analysis_enabled", 1))
         row["alias_list"] = brand_terms(row["brand_name"], row["aliases"])
         row["owned_domain_list"] = [x.strip().lower().removeprefix("www.") for x in row.get("owned_domains", "").replace("，", ",").split(",") if x.strip()]
         return row
@@ -101,7 +103,8 @@ class MonitorService:
         with connect(self.db_path) as conn:
             conn.execute(
                 """UPDATE settings SET brand_name=?, aliases=?, owned_domains=?, webhook_url=?,
-                   schedule_enabled=?, schedule_minutes=?, schedule_mode=?, updated_at=? WHERE id=1""",
+                   schedule_enabled=?, schedule_minutes=?, schedule_mode=?, ai_brand_analysis_enabled=?,
+                   updated_at=? WHERE id=1""",
                 (
                     brand,
                     str(data.get("aliases", "")).strip(),
@@ -110,6 +113,7 @@ class MonitorService:
                     int(bool(data.get("schedule_enabled", False))),
                     minutes,
                     mode,
+                    int(bool(data.get("ai_brand_analysis_enabled", True))),
                     iso_now(),
                 ),
             )
@@ -268,6 +272,7 @@ class MonitorService:
             "metrics": dashboard["totals"],
             "platform_performance": dashboard["platforms"],
             "prompt_performance": dashboard["prompts"],
+            "brand_competitive_exposure": dashboard.get("brand_landscape", {}),
             "top_cited_domains": dashboard["sources"],
             "retrieval": {
                 "funnel": retrieval.get("funnel", {}), "actual_queries": retrieval.get("queries", [])[:20],
@@ -343,7 +348,67 @@ class MonitorService:
         with connect(self.db_path) as conn:
             conn.execute("DELETE FROM prompts WHERE id=?", (prompt_id,))
 
-    def _insert_result(self, conn, run_id: int, platform_id: int, collection, terms: list[str], prompt_text: str):
+    def _brand_mentions(self, answer: str, prompt_text: str, settings: dict, use_ai: bool = True) -> list[dict]:
+        rules = extract_brand_mentions(answer, settings["brand_name"], settings["aliases"])
+        merged = {item["normalized_name"]: item for item in rules}
+        if use_ai and settings.get("ai_brand_analysis_enabled") and self.api_collector and hasattr(
+                self.api_collector, "extract_brand_mentions_ai"):
+            try:
+                generated = self.api_collector.extract_brand_mentions_ai(
+                    prompt_text, answer, settings["brand_name"], settings["alias_list"]
+                )
+                target_keys = {normalize_brand_key(term) for term in settings["alias_list"]}
+                for raw in generated.get("items", []):
+                    if not isinstance(raw, dict):
+                        continue
+                    name = re.sub(r"\s+", " ", str(raw.get("name", ""))).strip(" ，,、。")[:80]
+                    key = normalize_brand_key(name)
+                    if not key:
+                        continue
+                    is_target = key in target_keys or any(key in item or item in key for item in target_keys)
+                    canonical = settings["brand_name"] if is_target else name
+                    normalized = normalize_brand_key(canonical)
+                    rank = raw.get("priority_rank")
+                    try:
+                        rank = int(rank) if rank is not None else None
+                        rank = rank if rank and 1 <= rank <= 100 else None
+                    except (TypeError, ValueError):
+                        rank = None
+                    sentiment = str(raw.get("sentiment", "neutral")).lower()
+                    if sentiment not in {"positive", "neutral", "negative"}:
+                        sentiment = "neutral"
+                    try:
+                        confidence = min(1.0, max(0.0, float(raw.get("confidence", .8))))
+                    except (TypeError, ValueError):
+                        confidence = .8
+                    try:
+                        mention_count = max(1, min(100, int(raw.get("mention_count") or 1)))
+                    except (TypeError, ValueError):
+                        mention_count = 1
+                    item = {
+                        "brand_name": canonical, "normalized_name": normalized,
+                        "mention_count": mention_count,
+                        "priority_rank": rank, "sentiment": sentiment,
+                        "recommended": bool(raw.get("recommended", False)), "is_target": is_target,
+                        "extraction_method": "ai", "confidence": confidence,
+                        "evidence": str(raw.get("evidence", ""))[:500],
+                    }
+                    if normalized in merged:
+                        existing = merged[normalized]
+                        item["mention_count"] = max(item["mention_count"], existing["mention_count"])
+                        if item["priority_rank"] is None:
+                            item["priority_rank"] = existing["priority_rank"]
+                        item["is_target"] = item["is_target"] or existing["is_target"]
+                        item["extraction_method"] = "hybrid"
+                    merged[normalized] = item
+            except Exception:
+                pass
+        return sorted(merged.values(), key=lambda item: (
+            item["priority_rank"] or 999, not item["is_target"], item["brand_name"]
+        ))
+
+    def _insert_result(self, conn, run_id: int, platform_id: int, collection, terms: list[str], prompt_text: str,
+                       brand_mentions: list[dict] | None = None):
         hit, count, rank = analyze_answer(collection.answer, terms)
         sources = normalize_sources(collection.sources, collection.answer)
         cursor = conn.execute(
@@ -359,6 +424,16 @@ class MonitorService:
             [(cursor.lastrowid, x["url"], x["domain"], x["title"]) for x in sources],
         )
         result_id = cursor.lastrowid
+        conn.executemany(
+            """INSERT INTO brand_mentions
+               (result_id,brand_name,normalized_name,mention_count,priority_rank,sentiment,
+                recommended,is_target,extraction_method,confidence,evidence)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            [(result_id, item["brand_name"], item["normalized_name"], item["mention_count"],
+              item.get("priority_rank"), item.get("sentiment", "neutral"), int(bool(item.get("recommended"))),
+              int(bool(item.get("is_target"))), item.get("extraction_method", "rule"),
+              item.get("confidence", 0), item.get("evidence", "")) for item in (brand_mentions or [])],
+        )
         conn.executemany(
             """INSERT INTO search_queries
                (result_id, provider, query_text, query_rank, evidence_level, metadata_json)
@@ -459,8 +534,12 @@ class MonitorService:
                         result.error = f"API：{api_result.error}；WebDriver：{result.error}"
                 else:
                     result = api_result
+            mentions = self._brand_mentions(
+                result.answer, prompt["text"], settings,
+                use_ai=result.status == "success" and mode != "demo",
+            ) if result.answer.strip() else []
             with connect(self.db_path) as conn:
-                self._insert_result(conn, run_id, platform["id"], result, terms, prompt["text"])
+                self._insert_result(conn, run_id, platform["id"], result, terms, prompt["text"], mentions)
         with connect(self.db_path) as conn:
             conn.execute("UPDATE runs SET status='completed', finished_at=? WHERE id=?", (iso_now(), run_id))
         return run_id
@@ -479,17 +558,20 @@ class MonitorService:
             platform = conn.execute("SELECT * FROM platforms WHERE id=?", (platform_id,)).fetchone()
             if not prompt or not platform:
                 raise ValueError("提示词或平台不存在")
+            prompt = dict(prompt)
+        sources = [x.strip() for x in str(data.get("sources", "")).splitlines() if x.strip()]
+        from .collector import Collection
+        collection = Collection(answer=str(data.get("answer", "")), sources=sources, method="manual")
+        mentions = self._brand_mentions(collection.answer, prompt["text"], settings, use_ai=True)
+        with connect(self.db_path) as conn:
             cursor = conn.execute(
                 """INSERT INTO runs (mode, trigger_type, brand_name, prompt_id, prompt_text,
                    status, started_at, finished_at) VALUES ('manual', 'manual', ?, ?, ?, 'completed', ?, ?)""",
                 (settings["brand_name"], prompt_id, prompt["text"], iso_now(), iso_now()),
             )
-            sources = [x.strip() for x in str(data.get("sources", "")).splitlines() if x.strip()]
-            from .collector import Collection
-            collection = Collection(answer=str(data.get("answer", "")), sources=sources, method="manual")
             self._insert_result(
                 conn, cursor.lastrowid, platform_id, collection,
-                brand_terms(settings["brand_name"], settings["aliases"]), prompt["text"],
+                brand_terms(settings["brand_name"], settings["aliases"]), prompt["text"], mentions,
             )
             return cursor.lastrowid
 
@@ -590,6 +672,35 @@ class MonitorService:
                    {result_where} GROUP BY ru.prompt_text ORDER BY ru.prompt_text""",
                 result_params,
             )]
+            brand_filter = "WHERE r.status='success'" + (" AND r.captured_at >= ?" if cutoff else "")
+            brand_stats_raw = [dict(x) for x in conn.execute(
+                f"""SELECT bm.brand_name,bm.normalized_name,bm.is_target,
+                   COUNT(DISTINCT bm.result_id) result_mentions,SUM(bm.mention_count) mention_count,
+                   ROUND(AVG(bm.priority_rank),2) avg_priority,
+                   COUNT(DISTINCT CASE WHEN bm.priority_rank=1 THEN bm.result_id END) top1_results,
+                   COUNT(DISTINCT CASE WHEN bm.priority_rank<=3 THEN bm.result_id END) top3_results,
+                   COUNT(DISTINCT CASE WHEN bm.recommended=1 THEN bm.result_id END) recommended_results,
+                   COUNT(DISTINCT CASE WHEN bm.extraction_method IN ('ai','hybrid') THEN bm.result_id END) ai_results,
+                   ROUND(AVG(bm.confidence),3) confidence
+                   FROM brand_mentions bm JOIN results r ON r.id=bm.result_id {brand_filter}
+                   GROUP BY bm.normalized_name,bm.is_target ORDER BY result_mentions DESC,avg_priority""",
+                result_params,
+            )]
+            prompt_brand_raw = [dict(x) for x in conn.execute(
+                f"""SELECT ru.prompt_text,bm.brand_name,bm.normalized_name,bm.is_target,
+                   COUNT(DISTINCT bm.result_id) result_mentions,SUM(bm.mention_count) mention_count,
+                   ROUND(AVG(bm.priority_rank),2) avg_priority,
+                   COUNT(DISTINCT CASE WHEN bm.priority_rank=1 THEN bm.result_id END) top1_results,
+                   COUNT(DISTINCT CASE WHEN bm.priority_rank<=3 THEN bm.result_id END) top3_results,
+                   COUNT(DISTINCT CASE WHEN bm.recommended=1 THEN bm.result_id END) recommended_results,
+                   COUNT(DISTINCT CASE WHEN bm.extraction_method IN ('ai','hybrid') THEN bm.result_id END) ai_results,
+                   ROUND(AVG(bm.confidence),3) confidence
+                   FROM brand_mentions bm JOIN results r ON r.id=bm.result_id
+                   JOIN runs ru ON ru.id=r.run_id {brand_filter}
+                   GROUP BY ru.prompt_text,bm.normalized_name,bm.is_target
+                   ORDER BY ru.prompt_text,result_mentions DESC,avg_priority""",
+                result_params,
+            )]
             results = [dict(x) for x in conn.execute(
                 f"""SELECT r.id, r.run_id, r.answer_text, r.brand_hit, r.mention_count,
                    r.rank_position, r.citation_count, r.status, r.error_message, r.captured_at,
@@ -613,6 +724,12 @@ class MonitorService:
                     """SELECT provider,query_text,url,domain,title,search_rank,provider_score,
                        local_relevance,retrieved,selected,cited,citation_rank,snippet,published_at,evidence_level
                        FROM source_observations WHERE result_id=? ORDER BY cited DESC,selected DESC,search_rank,id LIMIT 100""",
+                    (result["id"],),
+                )]
+                result["brand_mentions"] = [dict(x) for x in conn.execute(
+                    """SELECT brand_name,normalized_name,mention_count,priority_rank,sentiment,
+                       recommended,is_target,extraction_method,confidence,evidence
+                       FROM brand_mentions WHERE result_id=? ORDER BY COALESCE(priority_rank,999),is_target DESC,id""",
                     (result["id"],),
                 )]
             trend = [dict(x) for x in conn.execute(
@@ -650,6 +767,41 @@ class MonitorService:
         for stat in prompt_stats:
             stat["hit_rate"] = round(stat["hits"] * 100 / stat["total"], 1) if stat["total"] else 0
         prompt_stats.sort(key=lambda x: (x["hit_rate"], -x["total"], x["prompt_text"]))
+
+        def brand_metrics(row, denominator):
+            row = dict(row)
+            denominator = max(0, int(denominator or 0))
+            coverage = round(row["result_mentions"] * 100 / denominator, 1) if denominator else 0
+            top1_rate = round(row["top1_results"] * 100 / denominator, 1) if denominator else 0
+            top3_rate = round(row["top3_results"] * 100 / denominator, 1) if denominator else 0
+            recommendation_rate = round(row["recommended_results"] * 100 / denominator, 1) if denominator else 0
+            priority_component = max(0, 100 - ((float(row["avg_priority"] or 6) - 1) * 20))
+            row.update({
+                "is_target": bool(row["is_target"]), "answer_coverage": coverage,
+                "top1_rate": top1_rate, "top3_rate": top3_rate,
+                "recommendation_rate": recommendation_rate,
+                "ai_coverage": round(row["ai_results"] * 100 / row["result_mentions"], 1) if row["result_mentions"] else 0,
+                "exposure_score": round(coverage * .55 + priority_component * .25 + recommendation_rate * .20, 1),
+            })
+            return row
+
+        overall_brands = [brand_metrics(row, totals["total"]) for row in brand_stats_raw]
+        overall_brands.sort(key=lambda row: (-row["exposure_score"], -row["answer_coverage"], row["brand_name"]))
+        for index, row in enumerate(overall_brands, 1):
+            row["competitive_rank"] = index
+        prompt_totals = {row["prompt_text"]: row["total"] for row in prompt_stats}
+        prompt_brand_groups = defaultdict(list)
+        for raw in prompt_brand_raw:
+            prompt_brand_groups[raw["prompt_text"]].append(brand_metrics(raw, prompt_totals.get(raw["prompt_text"], 0)))
+        by_prompt = []
+        for prompt_text, brands in prompt_brand_groups.items():
+            brands.sort(key=lambda row: (-row["exposure_score"], -row["answer_coverage"], row["brand_name"]))
+            for index, row in enumerate(brands, 1):
+                row["competitive_rank"] = index
+            by_prompt.append({"prompt_text": prompt_text, "total": prompt_totals.get(prompt_text, 0), "brands": brands[:20]})
+        by_prompt.sort(key=lambda row: row["prompt_text"])
+        target_brand = next((row for row in overall_brands if row["is_target"]), None)
+        leading_other = next((row for row in overall_brands if not row["is_target"]), None)
         owned_domains = self.settings()["owned_domain_list"]
         def owned(domain):
             return any(domain == item or domain.endswith("." + item) for item in owned_domains)
@@ -793,6 +945,9 @@ class MonitorService:
             })
         return {"totals": totals, "platforms": platform_stats, "sources": source_stats,
                 "prompts": prompt_stats, "results": results, "trend": list(reversed(trend)), "days": days,
+                "brand_landscape": {"overall": overall_brands[:30], "by_prompt": by_prompt,
+                                    "target": target_brand, "leading_other": leading_other,
+                                    "method_note": "明确顺序由规则计算；品牌归一、语境优先级与推荐倾向优先使用 AI，失败时回退规则。"},
                 "retrieval": {"funnel": funnel, "stage_sources": stage_sources,
                               "domains": domain_funnel, "queries": query_stats,
                               "opportunities": opportunities, "owned_domains": owned_domains,
@@ -804,11 +959,16 @@ class MonitorService:
         output = io.StringIO()
         output.write("\ufeff")
         writer = csv.writer(output)
-        writer.writerow(["采集时间", "平台", "提示词", "任务模式", "实际采集链路", "状态", "失败原因", "品牌命中", "提及次数", "出现位次", "引用数", "来源网址", "回答"])
+        writer.writerow(["采集时间", "平台", "提示词", "任务模式", "实际采集链路", "状态", "失败原因", "品牌命中", "提及次数", "出现位次",
+                         "回答内品牌", "品牌优先顺序", "品牌抽取方式", "引用数", "来源网址", "回答"])
         for row in data:
+            mentions = row.get("brand_mentions", [])
             writer.writerow([
                 row["captured_at"], row["platform_name"], row["prompt_text"], row["mode"], row["collection_method"], row["status"], row["error_message"],
                 "是" if row["brand_hit"] else "否", row["mention_count"], row["rank_position"] or "",
+                "、".join(x["brand_name"] for x in mentions),
+                "、".join(f"{x['brand_name']}#{x['priority_rank']}" for x in mentions if x.get("priority_rank")),
+                "、".join(sorted({x["extraction_method"] for x in mentions})),
                 row["citation_count"], "\n".join(x["url"] for x in row["sources"]), row["answer_text"],
             ])
         return output.getvalue()
