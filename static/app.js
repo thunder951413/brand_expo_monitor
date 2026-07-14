@@ -41,12 +41,28 @@ function switchView(view) {
   $$('.view').forEach(element => element.classList.remove('active'));
   $(`#${view}-view`).classList.add('active');
   $$('.nav-item').forEach(element => element.classList.toggle('active', element.dataset.view === view));
+  $$('.workflow-step').forEach(element => element.classList.toggle('active', element.dataset.go === view));
   const names = {
-    dashboard: ['AI 品牌可见性', '概览'], records: ['回答与引用', '证据记录'],
-    relevance: ['网站相关度', '信源分析'], prompts: ['提示词实验', 'AI 反推'], config: ['监测配置', '设置']
+    dashboard: ['AI 品牌可见性', '概览', '判断品牌是否被 AI 看见，以及最值得优先处理的问题。'],
+    records: ['回答与引用证据', '证据记录', '从汇总指标下钻到每次回答、来源网址和采集失败原因。'],
+    relevance: ['网站与信源研究', '信源分析', '解释网站如何从搜索召回进入选材，并最终成为回答引用。'],
+    prompts: ['提示词实验', '问题策略', '设计覆盖真实用户意图的问题，并用跨平台实验验证曝光规律。'],
+    config: ['采集与监测配置', '系统设置', '保证品牌识别、采集通道、登录状态和定时任务持续可用。']
   };
   $('#page-title').textContent = names[view][0];
   $('#breadcrumb-current').textContent = names[view][1];
+  $('#page-purpose').textContent = names[view][2];
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function promptIntent(text = '') {
+  if (/排行|排名|十大|榜/.test(text)) return '排行';
+  if (/对比|区别|优缺点|还是/.test(text)) return '对比';
+  if (/推荐|值得|靠谱/.test(text)) return '推荐';
+  if (/预算|价格|多少钱|成本/.test(text)) return '预算';
+  if (/怎么选|如何选|选购|指标/.test(text)) return '选购';
+  if (/人群|患者|老人|儿童|睡眠/.test(text)) return '场景';
+  return '发现';
 }
 
 async function loadConfig() {
@@ -70,6 +86,7 @@ async function loadConfig() {
   if (reverseGoal && !reverseGoal.value) reverseGoal.value = `让目标用户在品牌推荐、排行和产品对比中看到${settings.brand_name}`;
   renderConfig();
   renderApiConfig();
+  renderReadiness(response.scheduler || {});
 }
 
 function browserStateName(value) { return browserStateNames[value] || value; }
@@ -88,13 +105,52 @@ function renderConfig() {
     </div>`;
   }).join('');
   $('#prompt-list').innerHTML = prompts.map(prompt => `<div class="prompt-item">
-    <span class="prompt-text">${escapeHTML(prompt.text)}</span>
+    <span class="intent-tag">${promptIntent(prompt.text)}</span><span class="prompt-text">${escapeHTML(prompt.text)}</span>
     <label class="switch"><input type="checkbox" data-toggle="prompts" data-id="${prompt.id}" ${prompt.active ? 'checked' : ''}><span></span></label>
     <button class="delete-btn" data-delete="${prompt.id}" title="删除">×</button>
   </div>`).join('');
   const activeCount = $('#active-prompt-count');
   if (activeCount) activeCount.textContent = prompts.filter(prompt => prompt.active).length;
+  renderPromptPortfolio();
   $('#platform-filter').innerHTML = '<option value="">全部平台</option>' + platforms.map(platform => `<option value="${escapeHTML(platform.slug)}">${escapeHTML(platform.name)}</option>`).join('');
+}
+
+function renderReadiness(scheduler = {}) {
+  if (!state.config) return;
+  const { settings, prompts, platforms } = state.config;
+  const enabledPlatforms = platforms.filter(item => item.active);
+  const collectionReady = enabledPlatforms.filter(platform => {
+    const apiState = state.apis.find(item => item.slug === platform.slug);
+    const browser = state.browsers.find(item => item.slug === platform.slug);
+    return apiState?.configured || ['ready', 'anonymous'].includes(browser?.state);
+  }).length;
+  const checks = [
+    { label: '品牌识别', ok: Boolean(settings.brand_name && settings.alias_list?.length), detail: settings.brand_name || '未设置品牌' },
+    { label: '问题组合', ok: prompts.some(item => item.active), detail: `${prompts.filter(item => item.active).length} 个启用提示词` },
+    { label: '目标平台', ok: enabledPlatforms.length > 0, detail: `${enabledPlatforms.length} 个启用平台` },
+    { label: '采集通道', ok: collectionReady > 0, detail: `${collectionReady} / ${enabledPlatforms.length} 个平台已就绪` },
+    { label: '持续监测', ok: settings.schedule_enabled, detail: settings.schedule_enabled ? `每 ${settings.schedule_minutes} 分钟` : '定时任务未启用' }
+  ];
+  const score = Math.round(checks.filter(item => item.ok).length * 100 / checks.length);
+  $('#readiness-score').textContent = `${score}%`;
+  $('#readiness-score').className = score >= 80 ? 'ready' : score >= 60 ? 'partial' : 'missing';
+  $('#readiness-steps').innerHTML = checks.map((item, index) => `<div class="readiness-step ${item.ok ? 'ready' : 'missing'}"><span>${item.ok ? '✓' : index + 1}</span><div><b>${item.label}</b><small>${escapeHTML(item.detail)}</small></div></div>`).join('');
+}
+
+function renderPromptPortfolio() {
+  const element = $('#prompt-portfolio');
+  if (!element || !state.config) return;
+  const prompts = state.config.prompts;
+  const active = prompts.filter(item => item.active);
+  const intents = [...new Set(active.map(item => promptIntent(item.text)))];
+  const tested = new Set((state.dashboard?.prompts || []).filter(item => item.total).map(item => item.prompt_text));
+  const weak = (state.dashboard?.prompts || []).filter(item => item.total && item.hit_rate < 50).length;
+  element.innerHTML = [
+    ['启用问题', active.length, `共 ${prompts.length} 个问题`],
+    ['意图覆盖', intents.length, intents.join('、') || '尚未分类'],
+    ['已有样本', active.filter(item => tested.has(item.text)).length, '至少完成过一次采集'],
+    ['曝光缺口', weak, weak ? '优先扩展相近问法' : '当前没有低命中问题']
+  ].map((item, index) => `<article class="portfolio-card"><span>0${index + 1}</span><div><strong>${item[1]}</strong><b>${item[0]}</b><small>${escapeHTML(item[2])}</small></div></article>`).join('');
 }
 
 function renderReverseSuggestions(data) {
@@ -159,6 +215,8 @@ function renderDashboard() {
   $('#metric-collected').textContent = `${totals.collected} 次采集`;
   $('#metric-errors').textContent = totals.errors ? `${totals.errors} 次需要处理` : '没有异常任务';
   $('#updated-at').textContent = totals.last_capture ? `更新于 ${formatTime(totals.last_capture)}` : '尚未采集';
+  $('#scope-freshness').textContent = totals.last_capture ? `最近采集 ${formatTime(totals.last_capture)}` : '尚未采集';
+  renderDecisionSummary(dashboard);
   renderTrend(dashboard.trend);
   renderHealth(dashboard.platforms, totals);
   renderPlatformChart(dashboard.platforms);
@@ -166,6 +224,33 @@ function renderDashboard() {
   renderPromptPerformance(dashboard.prompts);
   renderRetrieval(dashboard.retrieval || {});
   renderTables();
+  renderPromptPortfolio();
+}
+
+function renderDecisionSummary(dashboard) {
+  const totals = dashboard.totals;
+  const weakPrompt = [...dashboard.prompts].filter(item => item.total).sort((a, b) => a.hit_rate - b.hit_rate)[0];
+  const weakPlatform = [...dashboard.platforms].filter(item => item.total || item.errors).sort((a, b) => a.hit_rate - b.hit_rate)[0];
+  const actions = [];
+  if (!totals.collected) actions.push(['建立基线', '先运行全部启用提示词，形成第一轮跨平台曝光基线。', 'prompts']);
+  if (totals.errors) actions.push(['修复采集', `${totals.errors} 次采集异常会降低结论可信度，先检查 API 或登录状态。`, 'config']);
+  if (weakPrompt && weakPrompt.hit_rate < 70) actions.push(['补足问题缺口', `“${weakPrompt.prompt_text}”可见度仅 ${weakPrompt.hit_rate}%，应扩展同意图问法并检查竞争信源。`, 'prompts']);
+  if (weakPlatform && weakPlatform.hit_rate < 70) actions.push(['聚焦平台', `${weakPlatform.name} 当前可见度 ${weakPlatform.hit_rate}%，适合单独核查回答与来源。`, 'records']);
+  if (totals.total && totals.citation_rate < 60) actions.push(['提升引用', `引用覆盖率 ${totals.citation_rate}%，需要查看高召回未引用网站和内容证据缺口。`, 'relevance']);
+  if (!actions.length) actions.push(['保持验证', '当前曝光与采集较稳定，继续按固定提示词重复采样，验证规律能否持续。', 'relevance']);
+  const displayed = actions.slice(0, 3);
+  $('#decision-level').textContent = totals.errors || totals.hit_rate < 50 ? '高优先级' : totals.hit_rate < 80 ? '需要优化' : '保持观察';
+  $('#decision-level').className = `decision-badge ${totals.errors || totals.hit_rate < 50 ? 'high' : totals.hit_rate < 80 ? 'medium' : 'good'}`;
+  $('#decision-list').className = 'decision-list';
+  $('#decision-list').innerHTML = displayed.map((item, index) => `<button data-go="${item[2]}"><span>${index + 1}</span><div><b>${escapeHTML(item[0])}</b><p>${escapeHTML(item[1])}</p></div><i>→</i></button>`).join('');
+
+  const repeated = (dashboard.retrieval?.variability || []).filter(item => item.runs >= 3).length;
+  const sampleScore = Math.min(100, totals.total * 5);
+  const repeatScore = Math.min(100, repeated * 20);
+  const confidence = Math.round(totals.success_rate * .45 + sampleScore * .35 + repeatScore * .2);
+  const confidenceLabel = confidence >= 80 ? '较可靠' : confidence >= 55 ? '可参考' : '探索性';
+  $('#confidence-summary').innerHTML = `<div class="confidence-score" style="--confidence:${confidence}"><strong>${confidence}</strong><span>${confidenceLabel}</span></div>
+    <div class="confidence-factors"><span><b>${totals.total}</b>有效回答<small>${sampleScore >= 80 ? '样本较充分' : '建议继续积累'}</small></span><span><b>${totals.success_rate}%</b>采集成功<small>${totals.errors ? '含异常任务' : '链路正常'}</small></span><span><b>${repeated}</b>重复基线<small>${repeated ? '可判断波动' : '尚不能判断随机性'}</small></span></div>`;
 }
 
 function renderRetrieval(retrieval) {
@@ -376,6 +461,10 @@ function renderTables() {
   $('#recent-body').innerHTML = all.slice(0, 7).map(recordRow).join('') || '<tr><td colspan="8">暂无数据，请先运行监测</td></tr>';
   const filtered = filteredResults();
   $('#record-count').textContent = `${filtered.length} 条记录`;
+  const success = all.filter(item => item.status === 'success').length;
+  const hit = all.filter(item => item.status === 'success' && item.brand_hit).length;
+  const cited = all.filter(item => item.status === 'success' && item.citation_count).length;
+  $('#record-scope-summary').innerHTML = `<span><b>${all.length}</b>总记录</span><span><b>${success}</b>成功</span><span><b>${hit}</b>品牌命中</span><span><b>${cited}</b>含引用</span>`;
   $('#records-body').innerHTML = filtered.map(recordRow).join('') || '<tr><td colspan="8">没有符合条件的记录</td></tr>';
 }
 
