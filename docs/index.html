@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="BrandScope 产品架构、采集链路、数据模型与指标口径">
+  <title>BrandScope · 产品架构与数据逻辑</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172033;
+      --muted: #667085;
+      --line: #dfe4ec;
+      --soft: #f5f7fb;
+      --panel: #ffffff;
+      --brand: #4357d9;
+      --brand-soft: #eef0ff;
+      --green: #16794d;
+      --amber: #9a6700;
+      --shadow: 0 18px 50px rgba(34, 45, 84, .08);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: #f8f9fc;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.65;
+    }
+    a { color: inherit; }
+    a:focus-visible, button:focus-visible { outline: 3px solid rgba(67, 87, 217, .35); outline-offset: 3px; }
+    .shell { width: min(1180px, calc(100% - 40px)); margin: 0 auto; }
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      border-bottom: 1px solid rgba(223, 228, 236, .9);
+      background: rgba(248, 249, 252, .92);
+      backdrop-filter: blur(16px);
+    }
+    .topbar { min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+    .brand { display: flex; align-items: center; gap: 11px; font-weight: 750; text-decoration: none; }
+    .mark { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 10px; color: white; background: var(--brand); box-shadow: 0 7px 18px rgba(67, 87, 217, .25); }
+    nav { display: flex; flex-wrap: wrap; gap: 18px; font-size: 14px; }
+    nav a { color: var(--muted); text-decoration: none; }
+    nav a:hover { color: var(--brand); }
+    .hero { padding: 82px 0 58px; }
+    .eyebrow { color: var(--brand); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; font-size: 12px; }
+    h1 { max-width: 880px; margin: 12px 0 18px; font-size: clamp(38px, 6vw, 68px); line-height: 1.08; letter-spacing: -.045em; }
+    .lead { max-width: 790px; margin: 0; color: var(--muted); font-size: clamp(17px, 2vw, 21px); }
+    .hero-links { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+    .button { display: inline-flex; align-items: center; min-height: 42px; padding: 0 18px; border: 1px solid var(--line); border-radius: 11px; background: var(--panel); font-weight: 650; text-decoration: none; }
+    .button.primary { border-color: var(--brand); color: #fff; background: var(--brand); }
+    main { padding-bottom: 80px; }
+    section { padding: 38px 0; scroll-margin-top: 82px; }
+    h2 { margin: 0 0 10px; font-size: clamp(26px, 4vw, 38px); letter-spacing: -.025em; }
+    h3 { margin: 0 0 8px; font-size: 17px; }
+    .section-intro { max-width: 760px; margin: 0 0 26px; color: var(--muted); }
+    .architecture {
+      display: grid;
+      grid-template-columns: minmax(170px, .8fr) 42px minmax(240px, 1.15fr) 42px minmax(210px, 1fr) 42px minmax(190px, .9fr);
+      align-items: stretch;
+      gap: 10px;
+    }
+    .lane { display: grid; align-content: start; gap: 10px; }
+    .lane-label { margin-bottom: 2px; color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+    .node { padding: 15px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); box-shadow: 0 6px 20px rgba(34, 45, 84, .04); }
+    .node strong { display: block; margin-bottom: 3px; }
+    .node span { display: block; color: var(--muted); font-size: 13px; line-height: 1.5; }
+    .node.accent { border-color: rgba(67, 87, 217, .28); background: var(--brand-soft); }
+    .arrow { display: grid; place-items: center; color: var(--brand); font-size: 24px; }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+    .card { padding: 22px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); box-shadow: 0 8px 24px rgba(34, 45, 84, .04); }
+    .number { display: inline-grid; width: 28px; height: 28px; margin-bottom: 14px; place-items: center; border-radius: 9px; color: var(--brand); background: var(--brand-soft); font-size: 13px; font-weight: 800; }
+    .card p { margin: 0; color: var(--muted); font-size: 14px; }
+    .pipeline { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); box-shadow: var(--shadow); }
+    .stage { position: relative; min-height: 165px; padding: 22px 18px; border-right: 1px solid var(--line); }
+    .stage:last-child { border-right: 0; }
+    .stage:not(:last-child)::after { content: "›"; position: absolute; top: 21px; right: -7px; z-index: 1; color: var(--brand); background: var(--panel); font-size: 24px; line-height: 1; }
+    .stage small { display: block; margin-bottom: 10px; color: var(--brand); font-weight: 750; }
+    .stage p { margin: 0; color: var(--muted); font-size: 13px; }
+    .evidence { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .evidence-list { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--line); }
+    .evidence-list li { display: grid; grid-template-columns: 130px 1fr; gap: 20px; padding: 15px 0; border-bottom: 1px solid var(--line); }
+    .evidence-list b { font-size: 14px; }
+    .evidence-list span { color: var(--muted); font-size: 14px; }
+    .status { display: inline-flex; align-items: center; gap: 7px; color: var(--green); font-size: 12px; font-weight: 700; }
+    .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    .status.conditional { color: var(--amber); }
+    .model { overflow-x: auto; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); }
+    table { width: 100%; min-width: 760px; border-collapse: collapse; }
+    th, td { padding: 14px 16px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; font-size: 14px; }
+    th { color: var(--muted); background: var(--soft); font-size: 12px; letter-spacing: .03em; }
+    tr:last-child td { border-bottom: 0; }
+    code { padding: 2px 6px; border-radius: 6px; color: #3546b7; background: var(--brand-soft); font-size: .9em; }
+    .principle { margin-top: 18px; padding: 18px 20px; border-left: 4px solid var(--brand); background: var(--brand-soft); }
+    .principle strong { display: block; margin-bottom: 4px; }
+    .principle span { color: var(--muted); }
+    footer { padding: 34px 0 48px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+    @media (max-width: 980px) {
+      .architecture { grid-template-columns: 1fr; }
+      .arrow { transform: rotate(90deg); min-height: 26px; }
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .pipeline { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .stage:nth-child(3) { border-right: 0; }
+      .stage:nth-child(-n+3) { border-bottom: 1px solid var(--line); }
+    }
+    @media (max-width: 680px) {
+      .shell { width: min(100% - 28px, 1180px); }
+      .topbar { align-items: flex-start; padding: 14px 0; }
+      nav { justify-content: flex-end; gap: 10px 14px; }
+      nav a:nth-child(2), nav a:nth-child(3) { display: none; }
+      .hero { padding: 58px 0 34px; }
+      .grid, .evidence, .pipeline { grid-template-columns: 1fr; }
+      .stage { min-height: 0; border-right: 0; border-bottom: 1px solid var(--line); }
+      .stage:last-child { border-bottom: 0; }
+      .stage:not(:last-child)::after { display: none; }
+      .evidence-list li { grid-template-columns: 1fr; gap: 4px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="shell topbar">
+      <a class="brand" href="#top"><span class="mark">B</span><span>BrandScope</span></a>
+      <nav aria-label="页面导航">
+        <a href="#architecture">架构</a>
+        <a href="#pipeline">采集链路</a>
+        <a href="#evidence">证据边界</a>
+        <a href="#data">数据模型</a>
+        <a href="https://github.com/thunder951413/brand_expo_monitor">GitHub ↗</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="top">
+    <div class="shell">
+      <div class="hero">
+        <div class="eyebrow">AI Brand Exposure Research System</div>
+        <h1>从一次回答，追踪到可验证的品牌曝光策略</h1>
+        <p class="lead">BrandScope 把多平台问答、品牌与竞品位置、联网引用、检索阶段和提示词差异连接成同一条证据链，用重复实验判断曝光是否稳定、变化来自哪里。</p>
+        <div class="hero-links">
+          <a class="button primary" href="https://github.com/thunder951413/brand_expo_monitor/releases">下载桌面版</a>
+          <a class="button" href="https://github.com/thunder951413/brand_expo_monitor#readme">阅读 README</a>
+        </div>
+      </div>
+
+      <section id="architecture">
+        <h2>系统架构</h2>
+        <p class="section-intro">四个层次把研究目标、平台采集、证据存储和决策页面分开；新增平台适配器或分析维度时，不需要改变已有证据口径。</p>
+        <div class="architecture" role="img" aria-label="输入配置经过采集适配器进入证据数据库，随后由分析服务提供给研究页面">
+          <div class="lane">
+            <div class="lane-label">研究输入</div>
+            <div class="node"><strong>品牌定义</strong><span>目标品牌、别名、自有域名</span></div>
+            <div class="node"><strong>提示词组合</strong><span>真实问题、意图分组、AI 反推</span></div>
+            <div class="node"><strong>任务计划</strong><span>人工执行、定时器、平台范围</span></div>
+          </div>
+          <div class="arrow" aria-hidden="true">→</div>
+          <div class="lane">
+            <div class="lane-label">采集适配</div>
+            <div class="node accent"><strong>官方联网 API</strong><span>优先保留结构化搜索与引用字段</span></div>
+            <div class="node"><strong>WebDriver</strong><span>复用登录态，采集页面回答和可见来源</span></div>
+            <div class="node"><strong>补充通道</strong><span>Webhook、人工回填、演示闭环</span></div>
+          </div>
+          <div class="arrow" aria-hidden="true">→</div>
+          <div class="lane">
+            <div class="lane-label">证据与分析</div>
+            <div class="node accent"><strong>SQLite 证据库</strong><span>回答、来源、查询、阶段观察、品牌提及</span></div>
+            <div class="node"><strong>分析服务</strong><span>曝光、位次、竞品、相关度、稳定性</span></div>
+            <div class="node"><strong>AI 研究上下文</strong><span>以当前真实汇总和回答节选支持追问</span></div>
+          </div>
+          <div class="arrow" aria-hidden="true">→</div>
+          <div class="lane">
+            <div class="lane-label">研究决策</div>
+            <div class="node"><strong>可见性概览</strong><span>发现平台与提示词机会</span></div>
+            <div class="node"><strong>回答与信源证据</strong><span>从指标回到单次事实</span></div>
+            <div class="node"><strong>提示词实验</strong><span>形成下一轮可验证假设</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="pipeline">
+        <h2>一次监测如何形成结论</h2>
+        <p class="section-intro">每一步都保留原始证据和状态。失败、未登录、选择器变化与“没有提及品牌”不会混成同一种结果。</p>
+        <div class="pipeline">
+          <div class="stage"><small>01 · 组合任务</small><h3>问题 × 平台</h3><p>锁定品牌版本、提示词和采集模式，生成可重复的运行单元。</p></div>
+          <div class="stage"><small>02 · 获取回答</small><h3>API 优先</h3><p>不可用时按配置回退到浏览器、Webhook 或人工证据。</p></div>
+          <div class="stage"><small>03 · 规范化</small><h3>统一证据</h3><p>标准化回答、URL、域名、搜索词和来源阶段字段。</p></div>
+          <div class="stage"><small>04 · 语义分析</small><h3>品牌与竞品</h3><p>规则保证可复核命中；AI 补充归一、语境、推荐倾向。</p></div>
+          <div class="stage"><small>05 · 聚合比较</small><h3>跨维度统计</h3><p>按平台、提示词、时间和来源计算表现与重复性。</p></div>
+          <div class="stage"><small>06 · 下一轮实验</small><h3>策略验证</h3><p>把弱曝光和来源机会转成新问题或内容建设假设。</p></div>
+        </div>
+      </section>
+
+      <section id="evidence">
+        <h2>平台证据不是理想化漏斗</h2>
+        <p class="section-intro">不同平台公开的信息深度不同，所以各阶段先作为独立观察保存；只有同一来源确实同时观察到上下游阶段时，才计算转化率。</p>
+        <div class="evidence">
+          <div class="card">
+            <h3>能够直接观测</h3>
+            <ul class="evidence-list">
+              <li><b>回答</b><span>最终输出文本、状态、采集方式与时间。</span></li>
+              <li><b>最终引用</b><span>页面或 API 明确返回的 URL、标题和引用顺序。</span></li>
+              <li><b>实际搜索词</b><span>平台明确暴露时记录；没有暴露就保持未知。</span></li>
+              <li><b>阶段轨迹</b><span>召回、选材、引用分别记录证据级别。</span></li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>指标使用边界</h3>
+            <ul class="evidence-list">
+              <li><b><span class="status">完整轨迹</span></b><span>允许计算来源从召回到选材、引用的同源转化。</span></li>
+              <li><b><span class="status conditional">仅最终引用</span></b><span>可用于引用覆盖和域名频率，不能反推它未被召回。</span></li>
+              <li><b>品牌曝光</b><span>分母只使用成功回答；失败采集不等于品牌未出现。</span></li>
+              <li><b>竞品覆盖</b><span>只使用已完成品牌分析的回答，旧数据不自动视为无竞品。</span></li>
+            </ul>
+          </div>
+        </div>
+        <div class="principle"><strong>核心原则</strong><span>未知就是未知。BrandScope 不把平台未公开的中间步骤补成 0，也不把竞争品牌曝光比例解释成市场份额。</span></div>
+      </section>
+
+      <section id="views">
+        <h2>页面对应的决策问题</h2>
+        <p class="section-intro">每个页面都服务于一类研究判断，汇总层和证据层可以互相追溯。</p>
+        <div class="grid">
+          <article class="card"><span class="number">1</span><h3>可见性概览</h3><p>目标品牌是否出现、平均位置如何、哪个平台或问题值得优先处理？</p></article>
+          <article class="card"><span class="number">2</span><h3>AI 交流</h3><p>当前证据能说明什么、哪些结论仍缺样本、下一步应该验证什么？</p></article>
+          <article class="card"><span class="number">3</span><h3>回答证据</h3><p>某个汇总指标来自哪一次回答、哪些引用以及什么失败状态？</p></article>
+          <article class="card"><span class="number">4</span><h3>信源研究</h3><p>哪些网站稳定进入引用，哪些只在特定平台、问题或时间出现？</p></article>
+          <article class="card"><span class="number">5</span><h3>提示词实验</h3><p>用户意图变化是否显著影响曝光，什么问题更可能引出目标品牌？</p></article>
+          <article class="card"><span class="number">6</span><h3>采集配置</h3><p>品牌识别、平台通道、登录态、API 和定时任务是否已经准备好？</p></article>
+        </div>
+      </section>
+
+      <section id="data">
+        <h2>核心数据模型</h2>
+        <p class="section-intro">运行批次连接问题和平台回答；回答再连接最终引用、搜索词、阶段观察与品牌提及，确保聚合结果可以回到原始记录。</p>
+        <div class="model">
+          <table>
+            <thead><tr><th>实体</th><th>职责</th><th>主要关系</th><th>不会承载的推断</th></tr></thead>
+            <tbody>
+              <tr><td><code>runs</code></td><td>一次提示词任务及触发方式</td><td>一个运行对应多个平台结果</td><td>不代表所有平台都成功</td></tr>
+              <tr><td><code>results</code></td><td>平台回答、状态、品牌命中与位次</td><td>连接来源和分析明细</td><td>失败结果不进入曝光分母</td></tr>
+              <tr><td><code>sources</code></td><td>最终回答明确引用的网址</td><td>从属于单个结果</td><td>不等同完整搜索结果集</td></tr>
+              <tr><td><code>search_queries</code></td><td>平台实际使用或明确返回的搜索词</td><td>从属于单个结果</td><td>不凭回答文本猜测搜索词</td></tr>
+              <tr><td><code>source_observations</code></td><td>来源在召回、选材、引用阶段的观测</td><td>连接查询、域名和结果</td><td>不可见阶段保持未知</td></tr>
+              <tr><td><code>brand_mentions</code></td><td>目标与竞争品牌、顺序、倾向和证据</td><td>从属于已分析结果</td><td>曝光比例不等于市场份额</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <footer><div class="shell">BrandScope · 让品牌曝光结论保留证据边界，并能进入下一轮实验。</div></footer>
+</body>
+</html>
