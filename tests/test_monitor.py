@@ -2,8 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from brand_monitor.collector import Collection, analyze_answer, brand_terms, normalize_sources
-from brand_monitor.db import initialize
+from brand_monitor.collector import Collection, analyze_answer, brand_terms, extract_brand_mentions, normalize_sources
+from brand_monitor.db import connect, initialize
 from brand_monitor.service import MonitorService, iso_now, source_variability
 from brand_monitor.webdriver_collector import clean_answer_text, extract_body_delta
 
@@ -30,6 +30,14 @@ class CollectorTest(unittest.TestCase):
         self.assertEqual(sources[0]["domain"], "resmed.com.cn")
         redirected = normalize_sources(["https://example.ai/redirect?url=https%3A%2F%2Fnews.example.com%2Fa"])
         self.assertEqual(redirected[0]["url"], "https://news.example.com/a")
+
+    def test_rule_brand_extraction_records_other_brands_and_priority(self):
+        items = extract_brand_mentions(
+            "1. 瑞思迈 ResMed：首选\n2. 飞利浦伟康\n3. 费雪派克", "瑞思迈ResMed", "瑞思迈,ResMed"
+        )
+        self.assertEqual([item["brand_name"] for item in items], ["瑞思迈ResMed", "飞利浦伟康", "费雪派克"])
+        self.assertEqual([item["priority_rank"] for item in items], [1, 2, 3])
+        self.assertTrue(items[0]["is_target"])
 
     def test_webdriver_body_delta_fallback(self):
         before = "豆包\n新对话\n联网搜索\n发送"
@@ -64,6 +72,12 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual(dashboard["totals"]["citation_rate"], 80.0)
         self.assertEqual(dashboard["totals"]["unique_sources"], 4)
         self.assertEqual(len(dashboard["prompts"]), 1)
+        self.assertEqual(len(dashboard["prompt_platforms"]), 5)
+        self.assertTrue(dashboard["retrieval"]["stage_sources"])
+        self.assertTrue(all(item.get("platform_slug") for item in dashboard["retrieval"]["stage_sources"]))
+        self.assertGreaterEqual(len(dashboard["brand_landscape"]["overall"]), 4)
+        self.assertTrue(dashboard["brand_landscape"]["target"]["is_target"])
+        self.assertTrue(all("brand_mentions" in result for result in dashboard["results"]))
         self.assertEqual(self.service.dashboard(days=30)["totals"]["total"], 5)
 
     def test_manual_capture(self):
@@ -78,6 +92,50 @@ class ServiceTest(unittest.TestCase):
         self.assertTrue(result["brand_hit"])
         self.assertEqual(result["citation_count"], 2)
         self.assertEqual(result["mode"], "manual")
+
+    def test_final_only_sources_do_not_create_fake_retrieval_conversion(self):
+        config = self.service.config()
+        self.service.manual_capture({
+            "prompt_id": config["prompts"][0]["id"],
+            "platform_id": config["platforms"][0]["id"],
+            "answer": "瑞思迈 ResMed 被提及。",
+            "sources": "https://final-only.example.com/article",
+        })
+        retrieval = self.service.dashboard()["retrieval"]
+        self.assertEqual(retrieval["funnel"]["retrieved"], 0)
+        self.assertEqual(retrieval["funnel"]["cited"], 1)
+        self.assertIsNone(retrieval["funnel"]["citation_rate"])
+        source = next(item for item in retrieval["opportunities"] if item["domain"] == "final-only.example.com")
+        self.assertEqual(source["evidence_scope"], "final_only")
+        self.assertIsNone(source["citation_rate"])
+
+    def test_competitive_coverage_excludes_unanalyzed_legacy_answers(self):
+        prompt_id = self.service.config()["prompts"][0]["id"]
+        self.service.run(prompt_id, "demo")
+        before = self.service.dashboard()["brand_landscape"]
+        target_before = before["target"]
+        with connect(self.db_path) as conn:
+            result_id = conn.execute(
+                "SELECT result_id FROM brand_mentions WHERE is_target=1 ORDER BY result_id LIMIT 1"
+            ).fetchone()[0]
+            conn.execute("DELETE FROM brand_mentions WHERE result_id=?", (result_id,))
+            conn.execute("UPDATE results SET brand_analyzed=0 WHERE id=?", (result_id,))
+        after = self.service.dashboard()["brand_landscape"]
+        self.assertEqual(after["analyzed_results"], before["analyzed_results"] - 1)
+        expected = round((target_before["result_mentions"] - 1) * 100 / after["analyzed_results"], 1)
+        self.assertEqual(after["target"]["answer_coverage"], expected)
+
+    def test_analyzed_answer_with_no_brands_remains_in_competitive_denominator(self):
+        config = self.service.config()
+        self.service.manual_capture({
+            "prompt_id": config["prompts"][0]["id"],
+            "platform_id": config["platforms"][0]["id"],
+            "answer": "选择时应关注噪声、压力范围和售后服务。",
+            "sources": "",
+        })
+        landscape = self.service.dashboard()["brand_landscape"]
+        self.assertEqual(landscape["analyzed_results"], 1)
+        self.assertEqual(landscape["overall"], [])
 
     def test_webdriver_schedule_mode_is_supported(self):
         settings = self.service.settings()
@@ -121,6 +179,36 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual(metrics["core_domains"][0]["domain"], "core.com")
         self.assertEqual({x["domain"] for x in metrics["rotating_domains"]}, {"a.com", "b.com"})
         self.assertGreater(metrics["change_rate"], 0)
+
+    def test_reverse_prompt_suggestions_have_explainable_scores(self):
+        result = self.service.reverse_prompt_suggestions("让用户在家用呼吸机推荐中看到瑞思迈ResMed", limit=5)
+        self.assertEqual(result["subject"], "家用呼吸机")
+        self.assertEqual(len(result["suggestions"]), 5)
+        self.assertTrue(all("瑞思迈" not in item["text"] for item in result["suggestions"]))
+        self.assertTrue(all(20 <= item["predicted_exposure"] <= 95 for item in result["suggestions"]))
+        self.assertTrue(all(item["evidence"] for item in result["suggestions"]))
+
+    def test_ai_chat_injects_monitoring_context_and_default_question(self):
+        class AiStub:
+            def __init__(self):
+                self.instructions = ""
+                self.messages = []
+
+            def openai_chat(self, instructions, messages):
+                self.instructions = instructions
+                self.messages = messages
+                return {"answer": "默认评估", "model": "test-model", "response_id": "resp", "usage": {}}
+
+        prompt_id = self.service.config()["prompts"][0]["id"]
+        self.service.run(prompt_id, "demo")
+        stub = AiStub()
+        service = MonitorService(self.db_path, api_collector=stub)
+        result = service.ai_chat([], days=30)
+        self.assertEqual(result["answer"], "默认评估")
+        self.assertIn("瑞思迈ResMed", stub.instructions)
+        self.assertIn("visibility", stub.instructions)
+        self.assertIn("默认评估", stub.messages[0]["content"])
+        self.assertEqual(result["context_meta"]["results"], 5)
 
     def test_platform_strategy_compares_different_prompts(self):
         config = self.service.config()

@@ -13,11 +13,20 @@
       <span class="brand-mark">B</span>
       <div><b>BrandScope</b><small>AI Visibility Monitor</small></div>
     </div>
-    <div class="nav-label">工作台</div>
+    <div class="nav-label">监测</div>
     <nav>
-      <button class="nav-item active" data-view="dashboard"><span class="nav-icon">⌂</span><span>可见性概览</span></button>
-      <button class="nav-item" data-view="records"><span class="nav-icon">≡</span><span>回答与来源</span></button>
-      <button class="nav-item" data-view="config"><span class="nav-icon">⚙</span><span>监测配置</span></button>
+      <button class="nav-item active" data-view="dashboard"><span class="nav-icon">⌂</span><span><b>可见性概览</b><small>判断曝光与变化</small></span></button>
+      <button class="nav-item" data-view="ai"><span class="nav-icon">◇</span><span><b>AI 交流</b><small>解读数据与讨论策略</small></span></button>
+      <button class="nav-item" data-view="records"><span class="nav-icon">≡</span><span><b>回答证据</b><small>核查回答与引用</small></span></button>
+    </nav>
+    <div class="nav-label nav-label-secondary">研究与优化</div>
+    <nav>
+      <button class="nav-item" data-view="relevance"><span class="nav-icon">◎</span><span><b>信源研究</b><small>解释网站进入路径</small></span></button>
+      <button class="nav-item" data-view="prompts"><span class="nav-icon">✦</span><span><b>提示词实验</b><small>设计与验证问题</small></span></button>
+    </nav>
+    <div class="nav-label nav-label-secondary">系统</div>
+    <nav>
+      <button class="nav-item" data-view="config"><span class="nav-icon">⚙</span><span><b>采集配置</b><small>保证数据持续可用</small></span></button>
     </nav>
     <div class="sidebar-card">
       <span class="live-dot"></span>
@@ -31,6 +40,7 @@
       <div>
         <p class="breadcrumb">品牌监测 / <span id="breadcrumb-current">概览</span></p>
         <h1 id="page-title">AI 品牌可见性</h1>
+        <p class="page-purpose" id="page-purpose">判断品牌是否被 AI 看见，以及最值得优先处理的问题。</p>
       </div>
       <div class="header-actions">
         <button class="button ghost" id="manual-btn">＋ 人工回填</button>
@@ -38,12 +48,19 @@
       </div>
     </header>
 
+    <div class="context-bar global-context">
+      <div class="context-brand"><span class="context-label">当前研究对象</span><strong id="brand-pill">瑞思迈ResMed</strong><span id="scope-summary">5 个平台 · 4 个提示词</span><span class="freshness" id="scope-freshness">尚未采集</span></div>
+      <div class="range-group" aria-label="时间范围">
+        <button data-days="7">7 天</button><button class="active" data-days="30">30 天</button><button data-days="90">90 天</button><button data-days="0">全部</button>
+      </div>
+    </div>
+
     <section id="dashboard-view" class="view active">
-      <div class="context-bar">
-        <div class="context-brand"><span class="context-label">监测品牌</span><strong id="brand-pill">瑞思迈ResMed</strong><span id="scope-summary">5 个平台 · 4 个提示词</span></div>
-        <div class="range-group" aria-label="时间范围">
-          <button data-days="7">7 天</button><button class="active" data-days="30">30 天</button><button data-days="90">90 天</button><button data-days="0">全部</button>
-        </div>
+      <div class="workflow-strip" aria-label="工作流程">
+        <button class="workflow-step active" data-go="dashboard"><span>01</span><b>判断曝光</b><small>是否出现、位置如何</small></button>
+        <button class="workflow-step" data-go="records"><span>02</span><b>核查证据</b><small>回答与引用是否可信</small></button>
+        <button class="workflow-step" data-go="relevance"><span>03</span><b>解释原因</b><small>网站在哪个阶段流失</small></button>
+        <button class="workflow-step" data-go="prompts"><span>04</span><b>设计实验</b><small>哪些问题更容易曝光</small></button>
       </div>
 
       <div class="metric-grid">
@@ -73,6 +90,24 @@
           <p class="metric-foot" id="metric-errors">没有异常任务</p>
         </article>
       </div>
+      <div class="metric-scope-note"><b>指标口径</b><span>可见度、平均位次和引用覆盖仅以成功返回的回答为分母；采集失败单独计入成功率，不会被误算成品牌未提及。</span></div>
+
+      <div class="decision-grid">
+        <article class="panel decision-panel">
+          <div class="panel-head"><div><div class="section-kicker">本期结论</div><h2>现在最值得做什么</h2><p>只基于当前筛选范围内的真实采集结果生成</p></div><span class="decision-badge" id="decision-level">等待数据</span></div>
+          <div id="decision-list" class="decision-list empty-state">完成一次监测后生成优先行动。</div>
+        </article>
+        <article class="panel confidence-panel">
+          <div class="panel-head"><div><div class="section-kicker">数据基础</div><h2>这个结论有多可靠</h2><p>同时检查样本量、采集成功率和重复测试</p></div></div>
+          <div id="confidence-summary" class="confidence-summary"></div>
+        </article>
+      </div>
+
+      <article class="panel brand-landscape-panel">
+        <div class="panel-head"><div><div class="section-kicker">竞争曝光</div><h2>目标品牌与其他品牌的提及和优先级</h2><p>同时比较回答覆盖、平均优先位次、首位率和推荐倾向</p></div><div class="landscape-controls"><span id="brand-analysis-method">规则 / AI 混合识别</span><select id="brand-prompt-filter"><option value="">全部提示词</option></select></div></div>
+        <div id="brand-landscape-summary" class="landscape-summary"></div>
+        <div class="table-wrap"><table><thead><tr><th>竞争位次</th><th>品牌</th><th>回答覆盖</th><th>平均优先位次</th><th>首位率</th><th>推荐率</th><th>综合曝光</th><th>识别依据</th></tr></thead><tbody id="brand-landscape-body"></tbody></table></div>
+      </article>
 
       <div class="overview-grid">
         <article class="panel trend-panel">
@@ -101,40 +136,13 @@
         </article>
 
         <article class="panel source-panel">
-          <div class="panel-head"><div><div class="section-kicker">来源情报</div><h2>AI 常引用的网站</h2><p>按域名统计引用次数</p></div></div>
+          <div class="panel-head"><div><div class="section-kicker">来源情报</div><h2>AI 常引用的网站</h2><p>按域名统计引用次数</p></div><button class="text-button" data-go="relevance">深入分析 →</button></div>
           <div id="source-chart" class="source-chart empty-state">尚无引用来源</div>
         </article>
       </div>
 
-      <div class="analysis-grid retrieval-grid">
-        <article class="panel retrieval-panel">
-          <div class="panel-head"><div><div class="section-kicker">检索漏斗</div><h2>召回 → 选材 → 引用</h2><p>区分平台可观测数据与本地相关度计算</p></div><a class="text-button" href="/api/export-retrieval.csv">导出轨迹 CSV ↗</a></div>
-          <div id="retrieval-funnel" class="retrieval-funnel empty-state">运行 API 采集后显示检索阶段</div>
-          <div id="retrieval-queries" class="query-chips"></div>
-        </article>
-        <article class="panel stage-source-panel">
-          <div class="panel-head"><div><div class="section-kicker">阶段网站</div><h2>每个阶段使用的网站</h2><p>查看高召回但未进入回答的来源</p></div></div>
-          <div id="stage-sources" class="stage-sources empty-state">尚无检索轨迹</div>
-        </article>
-      </div>
-
-      <article class="panel retrieval-opportunity-panel">
-        <div class="panel-head"><div><div class="section-kicker">策略实验</div><h2>来源转化与曝光机会</h2><p>召回多但引用少的网站，可用于分析内容相关性与信源偏好</p></div><button class="text-button" data-go="config">配置自有域名 →</button></div>
-        <div id="strategy-insights" class="strategy-insights"></div>
-        <div class="table-wrap"><table><thead><tr><th>网站</th><th>召回</th><th>选材</th><th>引用</th><th>引用转化</th><th>平均相关度</th><th>判断</th></tr></thead><tbody id="retrieval-opportunities-body"></tbody></table></div>
-      </article>
-
-      <article class="panel variability-panel">
-        <div class="panel-head"><div><div class="section-kicker">来源稳定性</div><h2>提示词变化与引用规律</h2><p>既观察品牌相关问题的整体信源池，也分离不同问法和时间波动的影响</p></div><span class="updated-at">持续采样后形成判断</span></div>
-        <div id="platform-strategies" class="platform-strategies"></div>
-        <div class="subtable-title"><b>不同提示词的变化幅度</b><span>两两比较引用域名，区分稳定信源与问题意图带来的变化</span></div>
-        <div class="table-wrap"><table><thead><tr><th>平台</th><th>提示词 A</th><th>提示词 B</th><th>来源重合</th><th>变化幅度</th><th>共同稳定信源</th></tr></thead><tbody id="prompt-comparison-body"></tbody></table></div>
-        <div class="subtable-title"><b>相同提示词的时间波动</b><span>保留重复问法作为随机性基线</span></div>
-        <div class="table-wrap"><table><thead><tr><th>平台 / 提示词</th><th>有效轮次</th><th>引用稳定度</th><th>来源变化率</th><th>规律判断</th><th>固定 / 轮换来源</th></tr></thead><tbody id="variability-body"></tbody></table></div>
-      </article>
-
       <article class="panel prompts-panel">
-        <div class="panel-head"><div><div class="section-kicker">机会识别</div><h2>提示词表现</h2><p>优先优化未提及品牌或引用不足的用户问题</p></div><button class="text-button" data-go="config">管理提示词 →</button></div>
+        <div class="panel-head"><div><div class="section-kicker">机会识别</div><h2>提示词表现</h2><p>优先优化未提及品牌或引用不足的用户问题</p></div><button class="text-button" data-go="prompts">管理与反推 →</button></div>
         <div class="table-wrap"><table><thead><tr><th>提示词</th><th>回答数</th><th>可见度</th><th>平均位次</th><th>引用数</th><th>机会判断</th></tr></thead><tbody id="prompt-performance-body"></tbody></table></div>
       </article>
 
@@ -144,7 +152,45 @@
       </article>
     </section>
 
+    <section id="ai-view" class="view">
+      <div class="config-intro ai-intro">
+        <div><div class="section-kicker">AI 研究助理</div><h2>让监测数据变成可讨论的策略</h2><p>自动装载应用方法论与当前筛选范围的数据，先生成默认评估，再围绕结论继续追问。</p></div>
+        <button class="button ghost" id="refresh-ai-evaluation">重新评估当前数据</button>
+      </div>
+      <div class="ai-context-strip">
+        <div><span>分析对象</span><b id="ai-context-brand">瑞思迈ResMed</b></div>
+        <div><span>数据范围</span><b id="ai-context-range">近 30 天</b></div>
+        <div><span>已装载</span><b id="ai-context-loaded">等待读取</b></div>
+        <div><span>使用模型</span><b id="ai-context-model">未配置</b></div>
+      </div>
+      <div class="ai-workspace">
+        <aside class="ai-guide panel">
+          <div class="panel-head"><div><div class="section-kicker">建议追问</div><h2>从结论继续研究</h2><p>问题会连同当前对话和最新监测上下文一起发送</p></div></div>
+          <div class="ai-question-list">
+            <button data-ai-question="当前曝光率处于什么水平？各平台最大的差异是什么？">当前曝光表现如何？</button>
+            <button data-ai-question="当前数据最能说明哪三个问题？哪些结论因为样本不足还不能确定？">这些数据说明什么问题？</button>
+            <button data-ai-question="如果目标是继续提升品牌曝光，接下来四周应该按什么优先级行动和复测？">如何继续提升曝光？</button>
+            <button data-ai-question="哪些提示词意图最值得扩展？请给出可直接加入实验的自然问题。">下一批提示词测什么？</button>
+            <button data-ai-question="哪些网站和信源最值得优先布局？请区分自有内容、第三方媒体和平台偏好。">优先布局哪些信源？</button>
+          </div>
+          <div class="ai-boundary"><b>分析边界</b><p>AI 会收到汇总指标、平台/提示词表现、信源轨迹和近期回答节选。密钥保存在本机，但以上监测数据会发送给 OpenAI 进行分析。</p><button class="text-button" data-go="config">管理 OpenAI 配置 →</button></div>
+        </aside>
+        <article class="ai-chat panel">
+          <div class="ai-chat-head"><div><span class="ai-orb">AI</span><div><b>BrandScope 研究助理</b><small id="ai-chat-status">等待默认评估</small></div></div><button class="text-button" id="clear-ai-chat">清空对话</button></div>
+          <div id="ai-messages" class="ai-messages"><div class="ai-empty"><span>◇</span><b>准备分析当前监测数据</b><p>配置 OpenAI API Key 后，进入本页会自动生成曝光评估。</p></div></div>
+          <form id="ai-chat-form" class="ai-composer">
+            <textarea id="ai-chat-input" rows="2" maxlength="4000" placeholder="继续问：为什么豆包引用这些网站？下一轮应该验证什么？"></textarea>
+            <button class="button primary" type="submit">发送</button>
+          </form>
+        </article>
+      </div>
+    </section>
+
     <section id="records-view" class="view">
+      <div class="module-brief">
+        <div><span>页面目的</span><b>把汇总指标追溯到每一条原始回答</b><p>用于确认品牌是否真的出现、引用网址是否正确，以及失败来自登录、API 还是页面变化。</p></div>
+        <div id="record-scope-summary" class="brief-stats"></div>
+      </div>
       <article class="panel records-panel">
         <div class="records-toolbar">
           <div><div class="section-kicker">原始证据</div><h2>回答与引用记录</h2><p>保留每次回答、命中、位次、来源和失败原因</p></div>
@@ -161,11 +207,95 @@
       </article>
     </section>
 
+    <section id="relevance-view" class="view">
+      <div class="config-intro">
+        <div><div class="section-kicker">信源情报</div><h2>网站相关度与检索规律</h2><p>集中查看网站从召回、选材到最终引用的相关度、转化率、稳定性与平台偏好。</p></div>
+        <a class="button ghost" href="/api/export-retrieval.csv">导出检索轨迹 CSV</a>
+      </div>
+      <div class="purpose-map">
+        <div><span>1</span><b>看召回</b><small>目标网站是否进入候选资料</small></div>
+        <i>→</i><div><span>2</span><b>看选材</b><small>高相关页面是否被模型采用</small></div>
+        <i>→</i><div><span>3</span><b>看引用</b><small>资料是否最终出现在回答中</small></div>
+        <i>→</i><div><span>4</span><b>定策略</b><small>区分稳定规律与偶发波动</small></div>
+      </div>
+      <div class="method-note"><b>证据边界</b><span>召回、选材、引用是独立的可观测阶段，并非所有平台都会同时暴露；因此后一个阶段可能多于前一个阶段。只有同一来源明确暴露召回轨迹时才计算转化率。</span></div>
+      <div class="analysis-grid retrieval-grid">
+        <article class="panel retrieval-panel">
+          <div class="panel-head"><div><div class="section-kicker">阶段证据</div><h2>可观测召回、选材与引用</h2><p>独立统计平台实际暴露的阶段，不补全不可见过程</p></div></div>
+          <div id="retrieval-funnel" class="retrieval-funnel empty-state">运行 API 采集后显示检索阶段</div>
+          <div id="retrieval-queries" class="query-chips"></div>
+        </article>
+        <article class="panel stage-source-panel">
+          <div class="panel-head"><div><div class="section-kicker">阶段网站</div><h2>每个阶段使用的网站</h2><p>按 AI 平台查看各网站的出现次数与平均相关度</p></div><button class="text-button" id="toggle-stage-sources">展开列表</button></div>
+          <div id="retrieval-platform-tabs" class="platform-tabs" aria-label="按 AI 平台筛选阶段网站"></div>
+          <div id="stage-sources" class="stage-sources empty-state">尚无检索轨迹</div>
+        </article>
+      </div>
+      <article class="panel retrieval-opportunity-panel">
+        <div class="panel-head"><div><div class="section-kicker">策略实验</div><h2>来源转化与曝光机会</h2><p>召回多但引用少的网站，可用于分析内容相关性与信源偏好</p></div><button class="text-button" data-go="config">配置自有域名 →</button></div>
+        <div id="strategy-insights" class="strategy-insights"></div>
+        <div class="table-wrap bounded-table"><table><thead><tr><th>网站</th><th>召回</th><th>选材</th><th>引用</th><th>可验证引用转化</th><th>平均相关度</th><th>判断</th></tr></thead><tbody id="retrieval-opportunities-body"></tbody></table></div>
+      </article>
+      <article class="panel variability-panel">
+        <div class="panel-head"><div><div class="section-kicker">来源稳定性</div><h2>提示词变化与引用规律</h2><p>区分不同问法带来的信源变化与相同条件下的时间波动</p></div><span class="updated-at">持续采样后形成判断</span></div>
+        <div id="platform-strategies" class="platform-strategies"></div>
+        <div class="subtable-title"><b>不同提示词的变化幅度</b><span>两两比较引用域名，找出跨问题稳定信源</span></div>
+        <div class="table-wrap bounded-table"><table><thead><tr><th>平台</th><th>提示词 A</th><th>提示词 B</th><th>来源重合</th><th>变化幅度</th><th>共同稳定信源</th></tr></thead><tbody id="prompt-comparison-body"></tbody></table></div>
+        <div class="subtable-title"><b>相同提示词的时间波动</b><span>保留重复问法作为随机性基线</span></div>
+        <div class="table-wrap bounded-table"><table><thead><tr><th>平台 / 提示词</th><th>有效轮次</th><th>引用稳定度</th><th>来源变化率</th><th>规律判断</th><th>固定 / 轮换来源</th></tr></thead><tbody id="variability-body"></tbody></table></div>
+      </article>
+    </section>
+
+    <section id="prompts-view" class="view">
+      <div class="config-intro">
+        <div><div class="section-kicker">问题策略</div><h2>提示词实验与 AI 反推</h2><p>从最终品牌曝光目标反推真实用户可能提出的问题，再用多平台采集验证。</p></div>
+        <button class="button primary" id="run-prompt-set">运行全部启用提示词</button>
+      </div>
+      <div id="prompt-portfolio" class="portfolio-grid"></div>
+      <div class="prompt-lab-grid">
+        <article class="panel prompt-reverse-card">
+          <div class="panel-head"><div><h2>目标 → 用户问题</h2><p>结合历史命中率、来源相关度和平台实际搜索词生成候选问题</p></div><span class="step-number">AI</span></div>
+          <form id="reverse-prompt-form">
+            <label>希望最终引出的目标<textarea id="reverse-goal" rows="4" maxlength="500" placeholder="例如：让准备购买家用呼吸机的用户在品牌推荐、排行和产品对比中看到瑞思迈ResMed"></textarea></label>
+            <div class="reverse-actions"><button class="button primary" type="submit">开始反推</button><small>配置 DeepSeek、千问或豆包 API 后使用模型扩展；否则使用可解释的数据规则。</small></div>
+          </form>
+          <div id="reverse-summary" class="reverse-summary">填写最终目的，系统会反推出可能引出该结果的用户问题。</div>
+        </article>
+        <article class="panel prompt-manager-card">
+          <div class="panel-head"><div><h2>提示词列表</h2><p>提示词是跨平台共用的实验变量，不按平台重复拆分</p></div><div class="panel-actions"><span class="step-number" id="active-prompt-count">0</span><button class="text-button" id="toggle-prompt-list">展开列表</button></div></div>
+          <form id="prompt-form" class="inline-form"><input id="new-prompt" placeholder="添加新的监测问题，例如：进口家用呼吸机怎么选？"><button class="button ghost" type="submit">添加</button></form>
+          <div id="prompt-list" class="prompt-list"></div>
+        </article>
+      </div>
+      <article class="panel prompt-platform-panel">
+        <div class="panel-head"><div><div class="section-kicker">跨平台验证</div><h2>同一提示词在不同 AI 平台的表现</h2><p>提示词列表保持统一；结果按平台 Tab 切换，定位某个平台的曝光缺口</p></div></div>
+        <div id="prompt-platform-tabs" class="platform-tabs" aria-label="按 AI 平台筛选提示词结果"></div>
+        <div class="table-wrap bounded-table"><table><thead><tr><th>提示词</th><th>有效回答</th><th>成功率</th><th>品牌可见度</th><th>平均位次</th><th>引用数</th><th>机会判断</th></tr></thead><tbody id="prompt-platform-body"></tbody></table></div>
+      </article>
+      <article class="panel reverse-results-panel">
+        <div class="panel-head"><div><div class="section-kicker">反推结果</div><h2>最可能引出目标的提示词</h2><p>预测分用于排序实验优先级，最终仍以多平台真实测试结果为准</p></div><div class="panel-actions"><span class="updated-at" id="reverse-provider">尚未生成</span><button class="text-button" id="toggle-reverse-results" hidden>展开结果</button></div></div>
+        <div id="reverse-suggestions" class="reverse-suggestions empty-state">暂无反推结果</div>
+      </article>
+    </section>
+
     <section id="config-view" class="view">
       <div class="config-intro">
         <div><div class="section-kicker">监测设置</div><h2>定义品牌、API 与采集节奏</h2><p>推荐使用官方 API；未配置的平台可由 WebDriver 兜底。</p></div>
         <button class="button primary" id="save-config">保存全部配置</button>
       </div>
+      <article class="panel readiness-panel">
+        <div class="panel-head"><div><div class="section-kicker">启动检查</div><h2>监测链路是否准备完成</h2><p>品牌、问题、平台、采集通道和定时任务缺一不可</p></div><strong id="readiness-score">0%</strong></div>
+        <div id="readiness-steps" class="readiness-steps"></div>
+      </article>
+      <article class="panel config-card full openai-config-card">
+        <div class="panel-head"><div><div class="section-kicker">AI 交流</div><h2>OpenAI 研究助理</h2><p>使用 Responses API 分析当前监测上下文并支持连续追问</p></div><div class="login-actions"><span id="openai-config-status" class="api-summary missing">尚未配置</span><button class="button primary" id="save-openai-config">保存 OpenAI 配置</button></div></div>
+        <div class="openai-config-grid">
+          <label>OpenAI API Key<input id="api-openai-key" type="password" autocomplete="new-password" placeholder="sk-..."></label>
+          <label>分析模型<input id="api-openai-model" placeholder="gpt-5.6-luna"></label>
+          <div class="openai-privacy"><b>数据说明</b><span>API Key 只保存在本机配置文件中，不返回页面明文。发起分析时，当前监测汇总、近期回答节选和对话记录会发送给 OpenAI。</span></div>
+        </div>
+        <div class="ai-analysis-option"><div><b>每条回答分析其他品牌</b><span>采集完成后自动识别其他品牌、推荐语境和优先顺序；OpenAI 不可用时回退到编号列表规则。</span></div><label class="switch"><input id="ai-brand-analysis-enabled" type="checkbox" checked><span></span></label></div>
+      </article>
       <div class="config-grid">
         <article class="panel config-card">
           <div class="panel-head"><div><h2>目标品牌</h2><p>回答匹配不区分英文大小写</p></div><span class="step-number">01</span></div>
@@ -195,11 +325,6 @@
       <article class="panel config-card full">
         <div class="panel-head"><div><h2>平台采集状态</h2><p>同时显示官方 API 与 WebDriver 登录状态</p></div><span class="step-number">02</span></div>
         <div id="platform-list" class="platform-list"></div>
-      </article>
-      <article class="panel config-card full">
-        <div class="panel-head"><div><h2>提示词列表</h2><p>启用的问题会分别在所有启用平台执行</p></div><span class="step-number">03</span></div>
-        <form id="prompt-form" class="inline-form"><input id="new-prompt" placeholder="添加新的监测问题，例如：进口家用呼吸机怎么选？"><button class="button ghost" type="submit">添加提示词</button></form>
-        <div id="prompt-list" class="prompt-list"></div>
       </article>
       <div class="save-hint" id="save-state">配置保存在本机数据库中；定时任务默认关闭。</div>
     </section>

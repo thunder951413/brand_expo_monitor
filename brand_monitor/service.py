@@ -4,12 +4,14 @@ import csv
 import io
 import json
 import math
+import re
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from itertools import combinations
 from statistics import pstdev
 
-from .collector import analyze_answer, brand_terms, demo_collect, normalize_sources, relevance_score, webhook_collect
+from .collector import (analyze_answer, brand_terms, demo_collect, extract_brand_mentions,
+                        normalize_brand_key, normalize_sources, relevance_score, webhook_collect)
 from .db import connect
 
 
@@ -85,6 +87,7 @@ class MonitorService:
         with connect(self.db_path) as conn:
             row = row_dict(conn.execute("SELECT * FROM settings WHERE id = 1").fetchone())
         row["schedule_enabled"] = bool(row["schedule_enabled"])
+        row["ai_brand_analysis_enabled"] = bool(row.get("ai_brand_analysis_enabled", 1))
         row["alias_list"] = brand_terms(row["brand_name"], row["aliases"])
         row["owned_domain_list"] = [x.strip().lower().removeprefix("www.") for x in row.get("owned_domains", "").replace("，", ",").split(",") if x.strip()]
         return row
@@ -100,7 +103,8 @@ class MonitorService:
         with connect(self.db_path) as conn:
             conn.execute(
                 """UPDATE settings SET brand_name=?, aliases=?, owned_domains=?, webhook_url=?,
-                   schedule_enabled=?, schedule_minutes=?, schedule_mode=?, updated_at=? WHERE id=1""",
+                   schedule_enabled=?, schedule_minutes=?, schedule_mode=?, ai_brand_analysis_enabled=?,
+                   updated_at=? WHERE id=1""",
                 (
                     brand,
                     str(data.get("aliases", "")).strip(),
@@ -109,6 +113,7 @@ class MonitorService:
                     int(bool(data.get("schedule_enabled", False))),
                     minutes,
                     mode,
+                    int(bool(data.get("ai_brand_analysis_enabled", True))),
                     iso_now(),
                 ),
             )
@@ -142,7 +147,198 @@ class MonitorService:
                 "INSERT INTO prompts (text, active, created_at) VALUES (?, 1, ?)", (text, iso_now())
             )
             row = conn.execute("SELECT * FROM prompts WHERE id=?", (cursor.lastrowid,)).fetchone()
-        return dict(row)
+            return dict(row)
+
+    def reverse_prompt_suggestions(self, goal: str, limit: int = 12) -> dict:
+        goal = str(goal or "").strip()
+        limit = max(1, min(30, int(limit or 12)))
+        settings = self.settings()
+        if not goal:
+            goal = f"让目标用户在品牌发现、推荐、排行和对比问题中看到{settings['brand_name']}"
+        if len(goal) > 500:
+            raise ValueError("最终目标不能超过 500 字")
+        with connect(self.db_path) as conn:
+            history = [dict(row) for row in conn.execute(
+                """SELECT ru.prompt_text,COUNT(DISTINCT r.id) runs,
+                   ROUND(AVG(CASE WHEN r.status='success' THEN r.brand_hit END)*100,1) hit_rate,
+                   ROUND(AVG(o.local_relevance),4) avg_relevance
+                   FROM runs ru LEFT JOIN results r ON r.run_id=ru.id
+                   LEFT JOIN source_observations o ON o.result_id=r.id
+                   GROUP BY ru.prompt_text ORDER BY runs DESC,hit_rate DESC LIMIT 30"""
+            )]
+            existing = [row[0] for row in conn.execute("SELECT text FROM prompts ORDER BY id")]
+            actual_queries = [dict(row) for row in conn.execute(
+                """SELECT query_text,COUNT(*) count FROM search_queries
+                   WHERE query_text!='' GROUP BY query_text ORDER BY count DESC LIMIT 20"""
+            )]
+
+        subject = "目标品类"
+        for text in existing:
+            candidate = re.split(r"品牌|推荐|排名|排行|对比|怎么|如何|有哪些|选购", text, maxsplit=1)[0].strip()
+            if len(candidate) >= 2:
+                subject = candidate
+                break
+        fallback = [
+            (f"{subject}都有哪些主流品牌？", "品牌发现", "覆盖用户建立候选品牌池的入口问题"),
+            (f"{subject}哪个品牌更值得推荐？", "推荐", "直接触发模型给出品牌候选与推荐理由"),
+            (f"{subject}品牌排行榜怎么看？", "排行", "测试目标品牌能否进入榜单型回答"),
+            (f"{subject}进口品牌和国产品牌有什么区别？", "对比", "通过品牌阵营比较扩大候选集合"),
+            (f"第一次买{subject}应该怎么选？", "新手选购", "新手问题通常需要品牌、参数和避坑建议"),
+            (f"家用场景选择{subject}要看哪些指标？", "使用场景", "从场景与参数引出符合条件的品牌"),
+            (f"预算有限时{subject}有哪些靠谱选择？", "预算", "测试价格约束下目标品牌的进入能力"),
+            (f"长期使用{subject}更看重哪些品牌能力？", "长期使用", "引出可靠性、服务和耗材等品牌证据"),
+            (f"{subject}常见品牌的优缺点分别是什么？", "优缺点", "比较型回答更容易形成多品牌提及"),
+            (f"适合睡眠呼吸暂停人群的{subject}怎么选？", "目标人群", "用具体人群需求触发产品与品牌匹配"),
+            (f"{subject}售后服务和耗材成本怎么比较？", "售后成本", "从长期成本反推品牌与渠道选择"),
+            (f"专业机构通常如何评价{subject}品牌？", "权威评价", "测试权威信源与专业评价对品牌曝光的影响"),
+        ]
+        instruction = (
+            f"最终目标：{goal}\n监测品类：{subject}\n目标品牌：{settings['brand_name']}（生成的问题中不要直接出现该品牌）\n"
+            f"历史提示词表现：{json.dumps(history[:12], ensure_ascii=False)}\n"
+            f"平台实际搜索词：{json.dumps(actual_queries[:12], ensure_ascii=False)}\n"
+            f"现有提示词：{json.dumps(existing, ensure_ascii=False)}\n请生成最多 {limit} 个新的自然用户问题。"
+        )
+        provider = "数据规则"
+        raw_items = []
+        ai_error = ""
+        if self.api_collector and hasattr(self.api_collector, "reverse_prompts"):
+            try:
+                generated = self.api_collector.reverse_prompts(instruction)
+                provider = generated.get("provider", "AI")
+                raw_items = generated.get("items", [])
+            except Exception as exc:
+                ai_error = str(exc)
+        candidates = []
+        for item in raw_items:
+            if isinstance(item, str):
+                candidates.append((item, "AI 扩展", "模型根据目标与历史证据反推"))
+            elif isinstance(item, dict):
+                candidates.append((str(item.get("text", "")), str(item.get("intent", "AI 扩展")),
+                                   str(item.get("reason", "模型根据目标与历史证据反推"))))
+        candidates.extend(fallback)
+        brand_values = [value.casefold() for value in settings["alias_list"]]
+        existing_folded = {text.casefold() for text in existing}
+        seen = set()
+        suggestions = []
+        total_runs = sum(int(row.get("runs") or 0) for row in history)
+        for text, intent, reason in candidates:
+            text = re.sub(r"\s+", " ", text).strip(" -—。")
+            folded = text.casefold()
+            if not text or folded in seen or folded in existing_folded or any(brand in folded for brand in brand_values):
+                continue
+            seen.add(folded)
+            closest = max(history, key=lambda row: relevance_score(text, row["prompt_text"]), default=None)
+            similarity = relevance_score(text, closest["prompt_text"]) if closest else 0
+            benchmark_hit = float(closest.get("hit_rate") or 0) / 100 if closest else .35
+            observed_relevance = float(closest.get("avg_relevance") or 0) if closest else 0
+            goal_fit = relevance_score(goal, text)
+            predicted = round(min(95, max(20, (benchmark_hit * .45 + similarity * .25 +
+                                                     observed_relevance * .15 + goal_fit * .15) * 100)))
+            evidence = (f"参考最相近历史问题“{closest['prompt_text']}”，命中率 {closest.get('hit_rate') or 0}%，"
+                        f"来源相关度 {round(observed_relevance * 100)}%。") if closest else "暂无历史样本，先作为探索问题测试。"
+            suggestions.append({
+                "text": text, "intent": intent or "探索", "reason": reason or "目标导向扩展",
+                "predicted_exposure": predicted, "confidence": "高" if total_runs >= 20 else "中" if total_runs >= 5 else "低",
+                "evidence": evidence, "goal_fit": round(goal_fit * 100),
+            })
+            if len(suggestions) >= limit:
+                break
+        suggestions.sort(key=lambda item: (-item["predicted_exposure"], -item["goal_fit"], item["text"]))
+        return {"goal": goal, "subject": subject, "provider": provider, "ai_error": ai_error,
+                "history_runs": total_runs, "suggestions": suggestions}
+
+    def ai_research_context(self, days: int = 30) -> dict:
+        days = min(365, max(0, int(days or 0)))
+        dashboard = self.dashboard(limit=30, days=days)
+        settings = self.settings()
+        retrieval = dashboard.get("retrieval", {})
+        recent = []
+        for result in dashboard.get("results", [])[:15]:
+            recent.append({
+                "platform": result["platform_name"], "prompt": result["prompt_text"],
+                "captured_at": result["captured_at"], "status": result["status"],
+                "collection_method": result.get("collection_method") or result.get("mode"),
+                "brand_hit": result["brand_hit"], "rank_position": result["rank_position"],
+                "citation_count": result["citation_count"], "error": result.get("error_message", ""),
+                "answer_excerpt": str(result.get("answer_text", ""))[:800],
+                "source_domains": list(dict.fromkeys(source["domain"] for source in result.get("sources", [])))[:12],
+            })
+        data = {
+            "scope": {
+                "brand": settings["brand_name"], "aliases": settings["alias_list"],
+                "owned_domains": settings["owned_domain_list"], "days": days or "all",
+                "generated_at": iso_now(),
+            },
+            "metrics": dashboard["totals"],
+            "platform_performance": dashboard["platforms"],
+            "prompt_performance": dashboard["prompts"],
+            "prompt_platform_performance": dashboard.get("prompt_platforms", []),
+            "brand_competitive_exposure": dashboard.get("brand_landscape", {}),
+            "top_cited_domains": dashboard["sources"],
+            "retrieval": {
+                "funnel": retrieval.get("funnel", {}), "actual_queries": retrieval.get("queries", [])[:20],
+                "domain_opportunities": retrieval.get("opportunities", [])[:20],
+                "strategy_insights": retrieval.get("insights", []),
+                "same_prompt_variability": retrieval.get("variability", [])[:20],
+                "platform_strategies": retrieval.get("platform_strategies", []),
+            },
+            "recent_evidence": recent,
+        }
+        return {
+            "data": data,
+            "meta": {
+                "days": days, "results": len(dashboard.get("results", [])),
+                "platforms": len(dashboard.get("platforms", [])),
+                "prompts": len(dashboard.get("prompts", [])),
+                "sources": len(dashboard.get("sources", [])),
+                "last_capture": dashboard["totals"].get("last_capture"),
+            },
+        }
+
+    def ai_chat(self, messages: list[dict], days: int = 30) -> dict:
+        if not self.api_collector or not hasattr(self.api_collector, "openai_chat"):
+            raise RuntimeError("OpenAI 分析服务未初始化")
+        if not isinstance(messages, list):
+            raise ValueError("messages 必须是数组")
+        clean_messages = []
+        for message in messages[-20:]:
+            if not isinstance(message, dict):
+                continue
+            role = str(message.get("role", ""))
+            content = str(message.get("content", "")).strip()
+            if role in {"user", "assistant"} and content:
+                clean_messages.append({"role": role, "content": content[:12000]})
+        if not clean_messages:
+            clean_messages = [{
+                "role": "user",
+                "content": ("请对当前监测数据做默认评估：先给出曝光结论和数据可信度，再指出最重要的问题，"
+                            "解释可能原因，并给出按优先级排序、可以继续验证的提升行动。"),
+            }]
+        context = self.ai_research_context(days)
+        methodology = {
+            "product_goal": "监测目标品牌在多种 AI 平台和品牌相关问题中的曝光、位置与引用来源，并通过重复实验寻找可提升曝光的规律。",
+            "workflow": ["采集回答与来源", "检测品牌命中和近似位次", "记录召回/选材/引用阶段", "比较提示词差异和时间波动", "形成可验证的内容与信源策略"],
+            "metric_rules": {
+                "visibility": "成功回答中出现目标品牌的比例",
+                "rank": "品牌首次出现在列表中的近似位置，只在命中回答中统计",
+                "citation_coverage": "成功回答中至少包含一个外部来源的比例",
+                "competitive_exposure": "只在已完成品牌语义抽取的回答内比较目标与其他品牌；综合曝光分是样本内相对指标，不是市场份额",
+                "local_relevance": "系统计算的词项重合度，不等同于平台内部相关度",
+                "stability": "同平台同提示词多轮引用域名集合的平均重合率；少于 3 轮只能视为样本不足",
+            },
+            "evidence_boundary": "召回、选材、引用分别独立观测；只有同一来源明确暴露召回轨迹时才计算转化率。不可见过程不得补全，演示数据不能代表平台实时表现。",
+        }
+        instructions = (
+            "你是 BrandScope 的 AI 品牌曝光研究助理。只根据下面的方法论和当前数据回答。"
+            "必须区分：观测事实、基于数据的推断、目前未知；不要把相关性写成因果。"
+            "样本不足时要明确说明，不要用看似精确的结论掩盖不确定性。"
+            "回答默认使用中文，先给结论，再列证据、问题和行动；行动必须可执行、可复测、可衡量。"
+            "如果用户询问当前数据之外的事实，明确说明数据中没有。\n\n"
+            f"应用方法论：\n{json.dumps(methodology, ensure_ascii=False)}\n\n"
+            f"当前监测上下文：\n{json.dumps(context['data'], ensure_ascii=False)}"
+        )
+        result = self.api_collector.openai_chat(instructions, clean_messages)
+        return {**result, "context_meta": context["meta"]}
 
     def toggle(self, table: str, item_id: int, active: bool) -> None:
         if table not in {"prompts", "platforms"}:
@@ -154,22 +350,93 @@ class MonitorService:
         with connect(self.db_path) as conn:
             conn.execute("DELETE FROM prompts WHERE id=?", (prompt_id,))
 
-    def _insert_result(self, conn, run_id: int, platform_id: int, collection, terms: list[str], prompt_text: str):
+    def _brand_mentions(self, answer: str, prompt_text: str, settings: dict, use_ai: bool = True) -> list[dict]:
+        rules = extract_brand_mentions(answer, settings["brand_name"], settings["aliases"])
+        merged = {item["normalized_name"]: item for item in rules}
+        if use_ai and settings.get("ai_brand_analysis_enabled") and self.api_collector and hasattr(
+                self.api_collector, "extract_brand_mentions_ai"):
+            try:
+                generated = self.api_collector.extract_brand_mentions_ai(
+                    prompt_text, answer, settings["brand_name"], settings["alias_list"]
+                )
+                target_keys = {normalize_brand_key(term) for term in settings["alias_list"]}
+                for raw in generated.get("items", []):
+                    if not isinstance(raw, dict):
+                        continue
+                    name = re.sub(r"\s+", " ", str(raw.get("name", ""))).strip(" ，,、。")[:80]
+                    key = normalize_brand_key(name)
+                    if not key:
+                        continue
+                    is_target = key in target_keys or any(key in item or item in key for item in target_keys)
+                    canonical = settings["brand_name"] if is_target else name
+                    normalized = normalize_brand_key(canonical)
+                    rank = raw.get("priority_rank")
+                    try:
+                        rank = int(rank) if rank is not None else None
+                        rank = rank if rank and 1 <= rank <= 100 else None
+                    except (TypeError, ValueError):
+                        rank = None
+                    sentiment = str(raw.get("sentiment", "neutral")).lower()
+                    if sentiment not in {"positive", "neutral", "negative"}:
+                        sentiment = "neutral"
+                    try:
+                        confidence = min(1.0, max(0.0, float(raw.get("confidence", .8))))
+                    except (TypeError, ValueError):
+                        confidence = .8
+                    try:
+                        mention_count = max(1, min(100, int(raw.get("mention_count") or 1)))
+                    except (TypeError, ValueError):
+                        mention_count = 1
+                    item = {
+                        "brand_name": canonical, "normalized_name": normalized,
+                        "mention_count": mention_count,
+                        "priority_rank": rank, "sentiment": sentiment,
+                        "recommended": bool(raw.get("recommended", False)), "is_target": is_target,
+                        "extraction_method": "ai", "confidence": confidence,
+                        "evidence": str(raw.get("evidence", ""))[:500],
+                    }
+                    if normalized in merged:
+                        existing = merged[normalized]
+                        item["mention_count"] = max(item["mention_count"], existing["mention_count"])
+                        if item["priority_rank"] is None:
+                            item["priority_rank"] = existing["priority_rank"]
+                        item["is_target"] = item["is_target"] or existing["is_target"]
+                        item["extraction_method"] = "hybrid"
+                    merged[normalized] = item
+            except Exception:
+                pass
+        return sorted(merged.values(), key=lambda item: (
+            item["priority_rank"] or 999, not item["is_target"], item["brand_name"]
+        ))
+
+    def _insert_result(self, conn, run_id: int, platform_id: int, collection, terms: list[str], prompt_text: str,
+                       brand_mentions: list[dict] | None = None):
         hit, count, rank = analyze_answer(collection.answer, terms)
         sources = normalize_sources(collection.sources, collection.answer)
         cursor = conn.execute(
             """INSERT INTO results
                (run_id, platform_id, answer_text, brand_hit, mention_count, rank_position,
-                citation_count, status, error_message, captured_at, collection_method)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                citation_count, status, error_message, captured_at, collection_method, brand_analyzed)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (run_id, platform_id, collection.answer, int(hit), count, rank, len(sources),
-             collection.status, collection.error, iso_now(), collection.method),
+             collection.status, collection.error, iso_now(), collection.method,
+             int(collection.status == "success" and brand_mentions is not None)),
         )
         conn.executemany(
             "INSERT INTO sources (result_id, url, domain, title) VALUES (?, ?, ?, ?)",
             [(cursor.lastrowid, x["url"], x["domain"], x["title"]) for x in sources],
         )
         result_id = cursor.lastrowid
+        conn.executemany(
+            """INSERT INTO brand_mentions
+               (result_id,brand_name,normalized_name,mention_count,priority_rank,sentiment,
+                recommended,is_target,extraction_method,confidence,evidence)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            [(result_id, item["brand_name"], item["normalized_name"], item["mention_count"],
+              item.get("priority_rank"), item.get("sentiment", "neutral"), int(bool(item.get("recommended"))),
+              int(bool(item.get("is_target"))), item.get("extraction_method", "rule"),
+              item.get("confidence", 0), item.get("evidence", "")) for item in (brand_mentions or [])],
+        )
         conn.executemany(
             """INSERT INTO search_queries
                (result_id, provider, query_text, query_rank, evidence_level, metadata_json)
@@ -270,8 +537,12 @@ class MonitorService:
                         result.error = f"API：{api_result.error}；WebDriver：{result.error}"
                 else:
                     result = api_result
+            mentions = self._brand_mentions(
+                result.answer, prompt["text"], settings,
+                use_ai=result.status == "success" and mode != "demo",
+            ) if result.answer.strip() else []
             with connect(self.db_path) as conn:
-                self._insert_result(conn, run_id, platform["id"], result, terms, prompt["text"])
+                self._insert_result(conn, run_id, platform["id"], result, terms, prompt["text"], mentions)
         with connect(self.db_path) as conn:
             conn.execute("UPDATE runs SET status='completed', finished_at=? WHERE id=?", (iso_now(), run_id))
         return run_id
@@ -290,17 +561,20 @@ class MonitorService:
             platform = conn.execute("SELECT * FROM platforms WHERE id=?", (platform_id,)).fetchone()
             if not prompt or not platform:
                 raise ValueError("提示词或平台不存在")
+            prompt = dict(prompt)
+        sources = [x.strip() for x in str(data.get("sources", "")).splitlines() if x.strip()]
+        from .collector import Collection
+        collection = Collection(answer=str(data.get("answer", "")), sources=sources, method="manual")
+        mentions = self._brand_mentions(collection.answer, prompt["text"], settings, use_ai=True)
+        with connect(self.db_path) as conn:
             cursor = conn.execute(
                 """INSERT INTO runs (mode, trigger_type, brand_name, prompt_id, prompt_text,
                    status, started_at, finished_at) VALUES ('manual', 'manual', ?, ?, ?, 'completed', ?, ?)""",
                 (settings["brand_name"], prompt_id, prompt["text"], iso_now(), iso_now()),
             )
-            sources = [x.strip() for x in str(data.get("sources", "")).splitlines() if x.strip()]
-            from .collector import Collection
-            collection = Collection(answer=str(data.get("answer", "")), sources=sources, method="manual")
             self._insert_result(
                 conn, cursor.lastrowid, platform_id, collection,
-                brand_terms(settings["brand_name"], settings["aliases"]), prompt["text"],
+                brand_terms(settings["brand_name"], settings["aliases"]), prompt["text"], mentions,
             )
             return cursor.lastrowid
 
@@ -352,25 +626,32 @@ class MonitorService:
                    COUNT(DISTINCT CASE WHEN o.retrieved=1 THEN o.result_id || '|' || o.url END) retrieved,
                    COUNT(DISTINCT CASE WHEN o.selected=1 THEN o.result_id || '|' || o.url END) selected,
                    COUNT(DISTINCT CASE WHEN o.cited=1 THEN o.result_id || '|' || o.url END) cited,
+                   COUNT(DISTINCT CASE WHEN o.retrieved=1 AND o.selected=1 THEN o.result_id || '|' || o.url END) selected_from_retrieved,
+                   COUNT(DISTINCT CASE WHEN o.retrieved=1 AND o.cited=1 THEN o.result_id || '|' || o.url END) cited_from_retrieved,
+                   COUNT(DISTINCT o.result_id) observed_results,
                    ROUND(AVG(CASE WHEN o.retrieved=1 THEN o.local_relevance END),4) avg_relevance
                    FROM source_observations o JOIN results r ON r.id=o.result_id {result_where}""",
                 result_params,
             ).fetchone())
             stage_sources = [dict(x) for x in conn.execute(
-                f"""SELECT stage, domain, COUNT(*) count,
+                f"""SELECT stage, platform_slug, platform_name, color, domain, COUNT(*) count,
                    ROUND(AVG(local_relevance),4) avg_relevance,
                    ROUND(AVG(provider_score),4) avg_provider_score
                    FROM (
-                     SELECT 'retrieved' stage,o.domain,o.local_relevance,o.provider_score,r.captured_at
-                       FROM source_observations o JOIN results r ON r.id=o.result_id WHERE o.retrieved=1
+                     SELECT 'retrieved' stage,p.slug platform_slug,p.name platform_name,p.color,
+                       o.domain,o.local_relevance,o.provider_score,r.captured_at
+                       FROM source_observations o JOIN results r ON r.id=o.result_id
+                       JOIN platforms p ON p.id=r.platform_id WHERE o.retrieved=1
                      UNION ALL
-                     SELECT 'selected',o.domain,o.local_relevance,o.provider_score,r.captured_at
-                       FROM source_observations o JOIN results r ON r.id=o.result_id WHERE o.selected=1
+                     SELECT 'selected',p.slug,p.name,p.color,o.domain,o.local_relevance,o.provider_score,r.captured_at
+                       FROM source_observations o JOIN results r ON r.id=o.result_id
+                       JOIN platforms p ON p.id=r.platform_id WHERE o.selected=1
                      UNION ALL
-                     SELECT 'cited',o.domain,o.local_relevance,o.provider_score,r.captured_at
-                       FROM source_observations o JOIN results r ON r.id=o.result_id WHERE o.cited=1
+                     SELECT 'cited',p.slug,p.name,p.color,o.domain,o.local_relevance,o.provider_score,r.captured_at
+                       FROM source_observations o JOIN results r ON r.id=o.result_id
+                       JOIN platforms p ON p.id=r.platform_id WHERE o.cited=1
                    ) x {"WHERE captured_at >= ?" if cutoff else ""}
-                   GROUP BY stage,domain ORDER BY stage,count DESC,domain""",
+                   GROUP BY stage,platform_slug,domain ORDER BY stage,platform_name,count DESC,domain""",
                 result_params,
             )]
             domain_funnel = [dict(x) for x in conn.execute(
@@ -378,6 +659,8 @@ class MonitorService:
                    SUM(CASE WHEN o.retrieved=1 THEN 1 ELSE 0 END) retrieved,
                    SUM(CASE WHEN o.selected=1 THEN 1 ELSE 0 END) selected,
                    SUM(CASE WHEN o.cited=1 THEN 1 ELSE 0 END) cited,
+                   SUM(CASE WHEN o.retrieved=1 AND o.selected=1 THEN 1 ELSE 0 END) selected_from_retrieved,
+                   SUM(CASE WHEN o.retrieved=1 AND o.cited=1 THEN 1 ELSE 0 END) cited_from_retrieved,
                    ROUND(AVG(o.local_relevance),4) avg_relevance,
                    ROUND(AVG(o.provider_score),4) avg_provider_score
                    FROM source_observations o JOIN results r ON r.id=o.result_id {result_where}
@@ -399,6 +682,58 @@ class MonitorService:
                    ROUND(AVG(CASE WHEN r.status='success' AND r.brand_hit=1 THEN r.rank_position END),1) avg_rank
                    FROM runs ru JOIN results r ON r.run_id=ru.id
                    {result_where} GROUP BY ru.prompt_text ORDER BY ru.prompt_text""",
+                result_params,
+            )]
+            prompt_platform_stats = [dict(x) for x in conn.execute(
+                f"""SELECT p.name platform_name,p.slug platform_slug,p.color,ru.prompt_text,
+                   COUNT(r.id) collected,
+                   COALESCE(SUM(CASE WHEN r.status='success' THEN 1 ELSE 0 END),0) total,
+                   COALESCE(SUM(CASE WHEN r.status='success' THEN r.brand_hit ELSE 0 END),0) hits,
+                   COALESCE(SUM(CASE WHEN r.status='success' THEN r.citation_count ELSE 0 END),0) citations,
+                   COALESCE(SUM(CASE WHEN r.status!='success' THEN 1 ELSE 0 END),0) errors,
+                   ROUND(AVG(CASE WHEN r.status='success' AND r.brand_hit=1 THEN r.rank_position END),1) avg_rank
+                   FROM runs ru JOIN results r ON r.run_id=ru.id JOIN platforms p ON p.id=r.platform_id
+                   {result_where} GROUP BY p.id,ru.prompt_text ORDER BY p.id,ru.prompt_text""",
+                result_params,
+            )]
+            brand_filter = "WHERE r.status='success'" + (" AND r.captured_at >= ?" if cutoff else "")
+            brand_analysis_total = conn.execute(
+                f"""SELECT COUNT(*) FROM results r {brand_filter} AND r.brand_analyzed=1""", result_params,
+            ).fetchone()[0]
+            prompt_analysis_totals = {
+                row[0]: row[1] for row in conn.execute(
+                    f"""SELECT ru.prompt_text,COUNT(r.id) FROM results r
+                       JOIN runs ru ON ru.id=r.run_id {brand_filter} AND r.brand_analyzed=1
+                       GROUP BY ru.prompt_text""",
+                    result_params,
+                )
+            }
+            brand_stats_raw = [dict(x) for x in conn.execute(
+                f"""SELECT bm.brand_name,bm.normalized_name,bm.is_target,
+                   COUNT(DISTINCT bm.result_id) result_mentions,SUM(bm.mention_count) mention_count,
+                   ROUND(AVG(bm.priority_rank),2) avg_priority,
+                   COUNT(DISTINCT CASE WHEN bm.priority_rank=1 THEN bm.result_id END) top1_results,
+                   COUNT(DISTINCT CASE WHEN bm.priority_rank<=3 THEN bm.result_id END) top3_results,
+                   COUNT(DISTINCT CASE WHEN bm.recommended=1 THEN bm.result_id END) recommended_results,
+                   COUNT(DISTINCT CASE WHEN bm.extraction_method IN ('ai','hybrid') THEN bm.result_id END) ai_results,
+                   ROUND(AVG(bm.confidence),3) confidence
+                   FROM brand_mentions bm JOIN results r ON r.id=bm.result_id {brand_filter}
+                   GROUP BY bm.normalized_name,bm.is_target ORDER BY result_mentions DESC,avg_priority""",
+                result_params,
+            )]
+            prompt_brand_raw = [dict(x) for x in conn.execute(
+                f"""SELECT ru.prompt_text,bm.brand_name,bm.normalized_name,bm.is_target,
+                   COUNT(DISTINCT bm.result_id) result_mentions,SUM(bm.mention_count) mention_count,
+                   ROUND(AVG(bm.priority_rank),2) avg_priority,
+                   COUNT(DISTINCT CASE WHEN bm.priority_rank=1 THEN bm.result_id END) top1_results,
+                   COUNT(DISTINCT CASE WHEN bm.priority_rank<=3 THEN bm.result_id END) top3_results,
+                   COUNT(DISTINCT CASE WHEN bm.recommended=1 THEN bm.result_id END) recommended_results,
+                   COUNT(DISTINCT CASE WHEN bm.extraction_method IN ('ai','hybrid') THEN bm.result_id END) ai_results,
+                   ROUND(AVG(bm.confidence),3) confidence
+                   FROM brand_mentions bm JOIN results r ON r.id=bm.result_id
+                   JOIN runs ru ON ru.id=r.run_id {brand_filter}
+                   GROUP BY ru.prompt_text,bm.normalized_name,bm.is_target
+                   ORDER BY ru.prompt_text,result_mentions DESC,avg_priority""",
                 result_params,
             )]
             results = [dict(x) for x in conn.execute(
@@ -424,6 +759,12 @@ class MonitorService:
                     """SELECT provider,query_text,url,domain,title,search_rank,provider_score,
                        local_relevance,retrieved,selected,cited,citation_rank,snippet,published_at,evidence_level
                        FROM source_observations WHERE result_id=? ORDER BY cited DESC,selected DESC,search_rank,id LIMIT 100""",
+                    (result["id"],),
+                )]
+                result["brand_mentions"] = [dict(x) for x in conn.execute(
+                    """SELECT brand_name,normalized_name,mention_count,priority_rank,sentiment,
+                       recommended,is_target,extraction_method,confidence,evidence
+                       FROM brand_mentions WHERE result_id=? ORDER BY COALESCE(priority_rank,999),is_target DESC,id""",
                     (result["id"],),
                 )]
             trend = [dict(x) for x in conn.execute(
@@ -460,28 +801,74 @@ class MonitorService:
             stat["citation_rate"] = round(stat["cited_results"] * 100 / stat["total"], 1) if stat["total"] else 0
         for stat in prompt_stats:
             stat["hit_rate"] = round(stat["hits"] * 100 / stat["total"], 1) if stat["total"] else 0
+            stat["success_rate"] = round(stat["total"] * 100 / stat["collected"], 1) if stat["collected"] else 0
+        for stat in prompt_platform_stats:
+            stat["hit_rate"] = round(stat["hits"] * 100 / stat["total"], 1) if stat["total"] else 0
+            stat["success_rate"] = round(stat["total"] * 100 / stat["collected"], 1) if stat["collected"] else 0
         prompt_stats.sort(key=lambda x: (x["hit_rate"], -x["total"], x["prompt_text"]))
+
+        def brand_metrics(row, denominator):
+            row = dict(row)
+            denominator = max(0, int(denominator or 0))
+            coverage = round(row["result_mentions"] * 100 / denominator, 1) if denominator else 0
+            top1_rate = round(row["top1_results"] * 100 / denominator, 1) if denominator else 0
+            top3_rate = round(row["top3_results"] * 100 / denominator, 1) if denominator else 0
+            recommendation_rate = round(row["recommended_results"] * 100 / denominator, 1) if denominator else 0
+            priority_component = max(0, 100 - ((float(row["avg_priority"] or 6) - 1) * 20))
+            row.update({
+                "is_target": bool(row["is_target"]), "answer_coverage": coverage,
+                "top1_rate": top1_rate, "top3_rate": top3_rate,
+                "recommendation_rate": recommendation_rate,
+                "ai_coverage": round(row["ai_results"] * 100 / row["result_mentions"], 1) if row["result_mentions"] else 0,
+                "exposure_score": round(coverage * .55 + priority_component * .25 + recommendation_rate * .20, 1),
+            })
+            return row
+
+        overall_brands = [brand_metrics(row, brand_analysis_total) for row in brand_stats_raw]
+        overall_brands.sort(key=lambda row: (-row["exposure_score"], -row["answer_coverage"], row["brand_name"]))
+        for index, row in enumerate(overall_brands, 1):
+            row["competitive_rank"] = index
+        prompt_brand_groups = defaultdict(list)
+        for raw in prompt_brand_raw:
+            prompt_brand_groups[raw["prompt_text"]].append(
+                brand_metrics(raw, prompt_analysis_totals.get(raw["prompt_text"], 0))
+            )
+        by_prompt = []
+        for prompt_text, brands in prompt_brand_groups.items():
+            brands.sort(key=lambda row: (-row["exposure_score"], -row["answer_coverage"], row["brand_name"]))
+            for index, row in enumerate(brands, 1):
+                row["competitive_rank"] = index
+            by_prompt.append({"prompt_text": prompt_text,
+                              "total": prompt_analysis_totals.get(prompt_text, 0), "brands": brands[:20]})
+        by_prompt.sort(key=lambda row: row["prompt_text"])
+        target_brand = next((row for row in overall_brands if row["is_target"]), None)
+        leading_other = next((row for row in overall_brands if not row["is_target"]), None)
         owned_domains = self.settings()["owned_domain_list"]
         def owned(domain):
             return any(domain == item or domain.endswith("." + item) for item in owned_domains)
         for row in domain_funnel:
             row["owned"] = owned(row["domain"])
-            row["selection_rate"] = round(row["selected"] * 100 / row["retrieved"], 1) if row["retrieved"] else 0
-            row["citation_rate"] = round(row["cited"] * 100 / row["retrieved"], 1) if row["retrieved"] else 0
+            row["selection_rate"] = round(row["selected_from_retrieved"] * 100 / row["retrieved"], 1) if row["retrieved"] else None
+            row["citation_rate"] = round(row["cited_from_retrieved"] * 100 / row["retrieved"], 1) if row["retrieved"] else None
+            row["evidence_scope"] = "full_trace" if row["retrieved"] else "final_only" if row["cited"] else "selection_only"
         owned_rows = [row for row in domain_funnel if row["owned"]]
         funnel["owned_retrieved"] = sum(row["retrieved"] for row in owned_rows)
         funnel["owned_selected"] = sum(row["selected"] for row in owned_rows)
         funnel["owned_cited"] = sum(row["cited"] for row in owned_rows)
-        funnel["selection_rate"] = round(funnel["selected"] * 100 / funnel["retrieved"], 1) if funnel["retrieved"] else 0
-        funnel["citation_rate"] = round(funnel["cited"] * 100 / funnel["retrieved"], 1) if funnel["retrieved"] else 0
+        funnel["selection_rate"] = round(funnel["selected_from_retrieved"] * 100 / funnel["retrieved"], 1) if funnel["retrieved"] else None
+        funnel["citation_rate"] = round(funnel["cited_from_retrieved"] * 100 / funnel["retrieved"], 1) if funnel["retrieved"] else None
         opportunities = sorted(
-            [row for row in domain_funnel if row["retrieved"] and not row["owned"]],
-            key=lambda row: (-row["retrieved"], row["citation_rate"], -float(row["avg_relevance"] or 0)),
+            [row for row in domain_funnel if (row["retrieved"] or row["selected"] or row["cited"]) and not row["owned"]],
+            key=lambda row: (-row["retrieved"], -row["cited"], -row["selected"],
+                             -float(row["avg_relevance"] or 0)),
         )[:12]
         insights = []
         if not owned_domains:
             insights.append({"level": "setup", "title": "先配置品牌自有域名",
                              "detail": "配置官网及内容站域名后，系统才能计算自有内容在召回、选材和引用阶段的流失位置。"})
+        elif funnel["owned_cited"] and not funnel["owned_retrieved"]:
+            insights.append({"level": "good", "title": "自有内容已被引用，但平台未暴露中间检索链路",
+                             "detail": "当前只能确认最终引用，不能据此推断召回排名或选材转化；继续使用能返回检索轨迹的 API 采集验证。"})
         elif not funnel["owned_retrieved"]:
             insights.append({"level": "high", "title": "自有内容尚未进入搜索召回",
                              "detail": "优先围绕实际搜索词建设可索引页面，并强化标题、问题表述、结构化答案和站点可抓取性。"})
@@ -494,7 +881,8 @@ class MonitorService:
         else:
             insights.append({"level": "good", "title": "自有内容已经形成引用",
                              "detail": "继续跟踪不同提示词和平台的引用稳定性，避免只依赖单一页面或单一搜索词。"})
-        top_cited = sorted(domain_funnel, key=lambda row: (-row["cited"], -row["retrieved"]))[:3]
+        top_cited = sorted((row for row in domain_funnel if row["cited"]),
+                           key=lambda row: (-row["cited"], -row["retrieved"]))[:3]
         if top_cited:
             insights.append({"level": "info", "title": "重点研究高引用信源",
                              "detail": "当前高引用网站：" + "、".join(row["domain"] for row in top_cited) + "。分析其内容结构、更新时间和可验证证据。"})
@@ -603,7 +991,12 @@ class MonitorService:
                 "diagnosis": diagnosis, "action": action,
             })
         return {"totals": totals, "platforms": platform_stats, "sources": source_stats,
-                "prompts": prompt_stats, "results": results, "trend": list(reversed(trend)), "days": days,
+                "prompts": prompt_stats, "prompt_platforms": prompt_platform_stats,
+                "results": results, "trend": list(reversed(trend)), "days": days,
+                "brand_landscape": {"overall": overall_brands[:30], "by_prompt": by_prompt,
+                                    "target": target_brand, "leading_other": leading_other,
+                                    "analyzed_results": brand_analysis_total,
+                                    "method_note": "明确顺序由规则计算；品牌归一、语境优先级与推荐倾向优先使用 AI，失败时回退规则。"},
                 "retrieval": {"funnel": funnel, "stage_sources": stage_sources,
                               "domains": domain_funnel, "queries": query_stats,
                               "opportunities": opportunities, "owned_domains": owned_domains,
@@ -615,11 +1008,16 @@ class MonitorService:
         output = io.StringIO()
         output.write("\ufeff")
         writer = csv.writer(output)
-        writer.writerow(["采集时间", "平台", "提示词", "任务模式", "实际采集链路", "状态", "失败原因", "品牌命中", "提及次数", "出现位次", "引用数", "来源网址", "回答"])
+        writer.writerow(["采集时间", "平台", "提示词", "任务模式", "实际采集链路", "状态", "失败原因", "品牌命中", "提及次数", "出现位次",
+                         "回答内品牌", "品牌优先顺序", "品牌抽取方式", "引用数", "来源网址", "回答"])
         for row in data:
+            mentions = row.get("brand_mentions", [])
             writer.writerow([
                 row["captured_at"], row["platform_name"], row["prompt_text"], row["mode"], row["collection_method"], row["status"], row["error_message"],
                 "是" if row["brand_hit"] else "否", row["mention_count"], row["rank_position"] or "",
+                "、".join(x["brand_name"] for x in mentions),
+                "、".join(f"{x['brand_name']}#{x['priority_rank']}" for x in mentions if x.get("priority_rank")),
+                "、".join(sorted({x["extraction_method"] for x in mentions})),
                 row["citation_count"], "\n".join(x["url"] for x in row["sources"]), row["answer_text"],
             ])
         return output.getvalue()

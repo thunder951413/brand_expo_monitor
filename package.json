@@ -1,6 +1,6 @@
 {
   "name": "brandscope-desktop",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "description": "AI 品牌曝光与引用来源监测桌面应用",
   "desktopName": "com.thunder951413.brandscope.desktop",
   "main": "electron/main.js",
@@ -12,7 +12,7 @@
   "private": true,
   "scripts": {
     "start:electron": "electron .",
-    "build:backend": "python scripts/build_backend.py",
+    "build:backend": "node scripts/run_python.cjs scripts/build_backend.py",
     "dist:mac:arm64": "npm run build:backend && electron-builder --mac --arm64 --publish never",
     "dist:mac:x64": "npm run build:backend && electron-builder --mac --x64 --publish never",
     "dist:win:x64": "npm run build:backend && electron-builder --win --x64 --publish never",

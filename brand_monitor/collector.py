@@ -72,6 +72,68 @@ def analyze_answer(answer: str, terms: list[str]) -> tuple[bool, int, int | None
     return True, count, max(1, len(list_items))
 
 
+def normalize_brand_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", value.casefold())
+
+
+def extract_brand_mentions(answer: str, target_name: str, aliases: str | Iterable[str]) -> list[dict]:
+    """Extract explicit brand-list evidence without inventing semantic priority."""
+    answer = str(answer or "")
+    terms = brand_terms(target_name, aliases)
+    target_keys = {normalize_brand_key(term) for term in terms}
+    output: dict[str, dict] = {}
+
+    def add(raw_name: str, priority_rank=None, confidence=.72, evidence=""):
+        name = re.sub(r"\s+", " ", raw_name).strip(" \t\n，,、;；。.:：-—")
+        name = re.sub(r"[（(](?:澳大利亚|美国|德国|中国|新西兰|荷兰|品牌|进口|国产)[^）)]*[）)]", "", name).strip()
+        name = re.split(r"\s*[：:；;—]\s*", name, maxsplit=1)[0].strip()
+        key = normalize_brand_key(name)
+        if not key or len(name) < 2 or len(name) > 40:
+            return
+        if re.search(r"选购|建议|指标|参数|价格|预算|产品线|注意|用途|场景|服务|品牌|较多|进口|国产", name):
+            return
+        is_target = key in target_keys or any(normalize_brand_key(term) in key or key in normalize_brand_key(term) for term in terms)
+        canonical = target_name if is_target else name
+        normalized = normalize_brand_key(canonical)
+        direct_count = max(1, len(re.findall(re.escape(name), answer, re.I)))
+        existing = output.get(normalized)
+        item = {
+            "brand_name": canonical, "normalized_name": normalized, "mention_count": direct_count,
+            "priority_rank": priority_rank, "sentiment": "neutral",
+            "recommended": bool(re.search(r"推荐|首选|优先|值得|可关注", evidence)),
+            "is_target": is_target, "extraction_method": "rule", "confidence": confidence,
+            "evidence": evidence[:500],
+        }
+        if existing:
+            existing["mention_count"] = max(existing["mention_count"], direct_count)
+            ranks = [rank for rank in (existing.get("priority_rank"), priority_rank) if rank]
+            existing["priority_rank"] = min(ranks) if ranks else None
+            existing["is_target"] = existing["is_target"] or is_target
+        else:
+            output[normalized] = item
+
+    hit, count, target_rank = analyze_answer(answer, terms)
+    if hit:
+        first_line = next((line.strip() for line in answer.splitlines() if any(term.casefold() in line.casefold() for term in terms)), "")
+        add(target_name, target_rank, 1.0, first_line)
+        output[normalize_brand_key(target_name)]["mention_count"] = count
+
+    numbered = re.compile(r"(?:^|\n|[；;])\s*(\d{1,2})[.、)]\s*([^\n；;]{2,80})")
+    for match in numbered.finditer(answer):
+        segment = match.group(2)
+        candidate = re.split(r"[：:；;，,。]", segment, maxsplit=1)[0]
+        add(candidate, int(match.group(1)), .82, match.group(0).strip())
+
+    for match in re.finditer(r"(?:品牌(?:包括|有|可关注)?|包括|例如|如)[：:]?([^。；;\n]{5,160})", answer):
+        parts = re.split(r"[、，,]|以及|和", match.group(1))
+        if len(parts) < 2:
+            continue
+        for index, part in enumerate(parts[:12], 1):
+            candidate = re.split(r"(?:等|在|可|适合|不同|各有|主要)", part.strip(), maxsplit=1)[0]
+            add(candidate, index, .58, match.group(0)[:500])
+    return sorted(output.values(), key=lambda item: (item["priority_rank"] or 999, not item["is_target"], item["brand_name"]))
+
+
 def normalize_sources(items: Iterable[dict | str], answer: str = "") -> list[dict]:
     raw_items: list[dict | str] = list(items or [])
     known = {item.get("url", "") if isinstance(item, dict) else item for item in raw_items}

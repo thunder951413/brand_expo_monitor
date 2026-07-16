@@ -28,6 +28,17 @@ class FakeSession:
             body = __import__("json").loads(data)
         self.calls.append((url, headers or {}, body))
         action = (headers or {}).get("X-TC-Action")
+        if "api.openai.com" in url:
+            if "品牌竞争曝光数据抽取器" in str((body or {}).get("instructions", "")):
+                return FakeResponse({"id": "resp_brands", "model": "gpt-5.6-luna", "output": [{"type": "message", "content": [
+                    {"type": "output_text", "text": json_module({"brands": [
+                        {"name": "瑞思迈 ResMed", "mention_count": 1, "priority_rank": 1, "sentiment": "positive", "recommended": True, "evidence": "首选瑞思迈", "confidence": .96},
+                        {"name": "飞利浦伟康", "mention_count": 1, "priority_rank": 2, "sentiment": "neutral", "recommended": False, "evidence": "其次飞利浦伟康", "confidence": .91}
+                    ]})}
+                ]}]})
+            return FakeResponse({"id": "resp_test", "model": "gpt-5.6-luna", "output": [{"type": "message", "content": [
+                {"type": "output_text", "text": "当前曝光率较高，但样本量仍需积累。"}
+            ]}], "usage": {"input_tokens": 100, "output_tokens": 20}})
         if url.endswith("/responses"):
             return FakeResponse({"output": [{"type": "message", "content": [
                 {"type": "output_text", "text": "推荐瑞思迈 ResMed。[1]",
@@ -45,6 +56,10 @@ class FakeSession:
             return FakeResponse({"references": [{"url": "https://search.example/a", "title": "搜索来源",
                                                   "content": "瑞思迈是常见品牌"}]})
         if "api.deepseek.com" in url:
+            if any("只返回 JSON" in str(message.get("content", "")) for message in (body or {}).get("messages", [])):
+                return FakeResponse({"choices": [{"message": {"content": json_module({"prompts": [
+                    {"text": "睡眠呼吸机怎么选？", "intent": "选购", "reason": "测试品牌进入候选集"}
+                ]})}}]})
             return FakeResponse({"choices": [{"message": {"content": "DeepSeek 根据资料提及瑞思迈。[1]"}}]})
         if action == "ChatCompletions":
             return FakeResponse({"Response": {"Choices": [{"Message": {"Content": "混元提及瑞思迈。[1]"}}],
@@ -70,6 +85,7 @@ class OfficialApiCollectorTest(unittest.TestCase):
             "DOUBAO_API_KEY": "db-key", "QWEN_API_KEY": "qw-key", "BAIDU_API_KEY": "bd-key",
             "TENCENT_SECRET_ID": "tc-id", "TENCENT_SECRET_KEY": "tc-key",
             "DEEPSEEK_API_KEY": "ds-key", "DEEPSEEK_SEARCH_PROVIDER": "baidu",
+            "OPENAI_API_KEY": "oa-key",
         })
         self.session = FakeSession()
         self.collector = OfficialApiCollector(self.store, self.session)
@@ -105,6 +121,27 @@ class OfficialApiCollectorTest(unittest.TestCase):
         )
         self.assertTrue(headers["Authorization"].startswith("TC3-HMAC-SHA256 Credential=id/"))
         self.assertNotIn("very-secret", headers["Authorization"])
+
+    def test_reverse_prompts_uses_configured_model(self):
+        result = self.collector.reverse_prompts("生成品牌曝光提示词")
+        self.assertEqual(result["provider"], "DeepSeek")
+        self.assertEqual(result["items"][0]["text"], "睡眠呼吸机怎么选？")
+
+    def test_openai_chat_uses_responses_api_without_cloud_storage(self):
+        result = self.collector.openai_chat("只根据监测数据回答", [{"role": "user", "content": "曝光如何？"}])
+        self.assertIn("曝光率", result["answer"])
+        url, headers, body = self.session.calls[-1]
+        self.assertEqual(url, "https://api.openai.com/v1/responses")
+        self.assertEqual(headers["Authorization"], "Bearer oa-key")
+        self.assertFalse(body["store"])
+        self.assertEqual(body["instructions"], "只根据监测数据回答")
+
+    def test_openai_extracts_competing_brands_and_priority(self):
+        result = self.collector.extract_brand_mentions_ai(
+            "家用呼吸机品牌推荐", "1. 瑞思迈 ResMed\n2. 飞利浦伟康", "瑞思迈ResMed", ["瑞思迈", "ResMed"]
+        )
+        self.assertEqual([item["name"] for item in result["items"]], ["瑞思迈 ResMed", "飞利浦伟康"])
+        self.assertEqual(result["items"][0]["priority_rank"], 1)
 
 
 if __name__ == "__main__":
